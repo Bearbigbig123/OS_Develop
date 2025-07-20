@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor
+# from concurrent.futures import ThreadPoolExecutorf
 import traceback
 # Excel 和圖片處理
 from openpyxl import Workbook
@@ -38,7 +38,7 @@ def load_execution_time(raw_data_file):
         except Exception as e:
             print(f" - load_execution_time: 無法讀取 'Time' Sheet 或檔案格式錯誤: {e}. 返回 None.")
             return None
-
+      
         # === 修改點：檢查 DataFrame 是否為空 ===
         if df.empty:
             print(" - load_execution_time: 'Time' Sheet 是空的. 返回 None.")

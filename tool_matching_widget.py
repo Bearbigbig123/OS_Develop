@@ -58,9 +58,18 @@ class ToolMatchingWidget(QtWidgets.QWidget):
         btn_font.setBold(True)
         btn_font.setPointSize(12)
         file_btn.setFont(btn_font)
+        file_btn.setFixedWidth(150)
         file_btn.clicked.connect(self.select_file)
         file_layout.addWidget(self.file_path_entry)
         file_layout.addWidget(file_btn)
+
+        # 新增 temp 按鈕
+        temp_btn = QtWidgets.QPushButton("💾 temp")
+        temp_btn.setFont(btn_font)
+        temp_btn.setFixedWidth(120)
+        temp_btn.clicked.connect(self.generate_temp_csv)
+        file_layout.addWidget(temp_btn)
+
         top_layout.addLayout(file_layout)
 
         # 新增補滿筆數欄位
@@ -80,8 +89,8 @@ class ToolMatchingWidget(QtWidgets.QWidget):
         # 新增資料篩選模式選擇
         filter_layout = QtWidgets.QHBoxLayout()
         self.filter_mode_combo = QtWidgets.QComboBox()
-        self.filter_mode_combo.addItems(["全算", "指定日期(一個月mean/半年sigma)"])
-        self.filter_mode_combo.setFixedWidth(220)
+        self.filter_mode_combo.addItems(["全算", "指定日期(一個月mean/半年sigma)", "最新進點(一個月mean/半年sigma)"])
+        self.filter_mode_combo.setFixedWidth(260)
         self.filter_mode_combo.setFont(QtGui.QFont("Microsoft JhengHei", 11))
         filter_layout.addWidget(QtWidgets.QLabel("資料篩選模式："))
         filter_layout.addWidget(self.filter_mode_combo)
@@ -255,7 +264,32 @@ class ToolMatchingWidget(QtWidgets.QWidget):
             }
         """)
         self.main_layout.addWidget(self.result_table, 1) # 表格佔用更多空間
-
+    def generate_temp_csv(self):
+        # 預設範例資料
+        data = {
+            "GroupName": ["GroupA"],
+            "ChartName": ["X"],
+            "point_time": ["2023/5/15 14:39"],
+            "matching_group": ["A"],
+            "point_val": [99.88135943],
+            "characteristic": ["Nominal"]
+        }
+        df = pd.DataFrame(data)
+        # 彈出儲存檔案對話框
+        save_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "儲存範例 CSV 檔案",
+            "tool_matching_input_example.csv",
+            "CSV 檔案 (*.csv);;所有檔案 (*.*)"
+        )
+        if not save_path:
+            self.status_label.setText("已取消儲存範例檔案。")
+            return
+        try:
+            df.to_csv(save_path, index=False, encoding="utf-8-sig")
+            self.status_label.setText(f"範例 CSV 已儲存到: {save_path}")
+        except Exception as e:
+            self.status_label.setText(f"範例 CSV 產生失敗: {e}")
     def select_file(self):
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "選擇 CSV 檔案", "", "CSV 檔案 (*.csv);;所有檔案 (*.*)"
@@ -340,7 +374,7 @@ class ToolMatchingWidget(QtWidgets.QWidget):
                 else:
                     self._analyze_multiple_groups(subdf, group_stats, gname, cname, characteristic[0], results)
             self._create_boxplots(grouped)
-        else:
+        elif filter_mode == 1:
             # 指定日期模式
             grouped = df.groupby(["GroupName", "ChartName"])
             print("\n[DEBUG] All unique (GroupName, ChartName) pairs:")
@@ -361,7 +395,7 @@ class ToolMatchingWidget(QtWidgets.QWidget):
                 # 先抓初始區間
                 mean_df = subdf[(subdf["point_time"] > mean_start) & (subdf["point_time"] <= mean_end)].copy()
                 sigma_df = subdf[(subdf["point_time"] > sigma_start) & (subdf["point_time"] <= sigma_end)].copy()
-                # 針對每個 matching_group 補足 mean_df(只補到5筆)
+                # 針對每個 matching_group 補足 mean_df（只在不足時才補）
                 min_time = subdf["point_time"].min()
                 for mg in subdf["matching_group"].unique():
                     mg_mean = mean_df[mean_df["matching_group"] == mg]
@@ -373,10 +407,7 @@ class ToolMatchingWidget(QtWidgets.QWidget):
                             mg_mean = all_mg[(all_mg["point_time"] > cur_start) & (all_mg["point_time"] <= mean_end)]
                         # 合併補足
                         mean_df = pd.concat([mean_df, mg_mean]).drop_duplicates()
-                    # 最後只保留該 group 最新的 fill_num 筆
-                    mean_df = mean_df.sort_values(["matching_group", "point_time"], ascending=[True, False])
-                    mean_df = mean_df.groupby("matching_group").head(fill_num)
-                # sigma_df同理(補到指定筆數)
+                # sigma_df同理（只在不足時才補）
                 for mg in subdf["matching_group"].unique():
                     mg_sigma = sigma_df[sigma_df["matching_group"] == mg]
                     if len(mg_sigma) < fill_num:
@@ -386,10 +417,6 @@ class ToolMatchingWidget(QtWidgets.QWidget):
                             cur_start = cur_start - pd.Timedelta(days=14)
                             mg_sigma = all_mg[(all_mg["point_time"] > cur_start) & (all_mg["point_time"] <= sigma_end)]
                         sigma_df = pd.concat([sigma_df, mg_sigma]).drop_duplicates()
-                    # 最後只保留該 group 最新的 fill_num 筆
-                    sigma_df = sigma_df.sort_values(["matching_group", "point_time"], ascending=[True, False])
-                    sigma_df = sigma_df.groupby("matching_group").head(fill_num)
-                # 收集補齊後的mean_df(只用於畫圖)
                 mean_df_all.append(mean_df.assign(GroupName=gname, ChartName=cname))
                 sigma_df_all.append(sigma_df.assign(GroupName=gname, ChartName=cname))
                 mean_stats = mean_df.groupby("matching_group")["point_val"].agg(['mean', 'count']).reset_index()
@@ -401,7 +428,59 @@ class ToolMatchingWidget(QtWidgets.QWidget):
                     self._analyze_two_groups(group_stats, gname, cname, characteristic[0], results)
                 else:
                     self._analyze_multiple_groups_time(mean_df, sigma_df, group_stats, gname, cname, characteristic[0], results)
-            # 圖表用一個月(補到5筆)的mean_df合併後分組
+            if mean_df_all:
+                mean_df_concat = pd.concat(mean_df_all, ignore_index=True)
+                mean_grouped = mean_df_concat.groupby(["GroupName", "ChartName"])
+                self._create_boxplots(mean_grouped)
+            else:
+                self._create_boxplots(grouped)
+        elif filter_mode == 2:
+            # 最新進點模式
+            grouped = df.groupby(["GroupName", "ChartName"])
+            sigma_df_all = []
+            mean_df_all = []
+            for (gname, cname), subdf in grouped:
+                characteristic = subdf["characteristic"].dropna().unique()
+                if len(characteristic) != 1:
+                    self.status_label.setText(f"Group: {gname}-{cname} 的 characteristic 不唯一或缺失")
+                    continue
+                latest_time = subdf["point_time"].max()
+                mean_end = latest_time
+                sigma_end = latest_time
+                mean_start = mean_end - pd.DateOffset(months=1)
+                sigma_start = sigma_end - pd.DateOffset(months=6)
+                mean_df = subdf[(subdf["point_time"] > mean_start) & (subdf["point_time"] <= mean_end)].copy()
+                sigma_df = subdf[(subdf["point_time"] > sigma_start) & (subdf["point_time"] <= sigma_end)].copy()
+                min_time = subdf["point_time"].min()
+                for mg in subdf["matching_group"].unique():
+                    mg_mean = mean_df[mean_df["matching_group"] == mg]
+                    if len(mg_mean) < fill_num:
+                        all_mg = subdf[subdf["matching_group"] == mg].sort_values("point_time")
+                        cur_start = mean_start
+                        while len(mg_mean) < fill_num and cur_start > min_time:
+                            cur_start = cur_start - pd.Timedelta(days=7)
+                            mg_mean = all_mg[(all_mg["point_time"] > cur_start) & (all_mg["point_time"] <= mean_end)]
+                        mean_df = pd.concat([mean_df, mg_mean]).drop_duplicates()
+                for mg in subdf["matching_group"].unique():
+                    mg_sigma = sigma_df[sigma_df["matching_group"] == mg]
+                    if len(mg_sigma) < fill_num:
+                        all_mg = subdf[subdf["matching_group"] == mg].sort_values("point_time")
+                        cur_start = sigma_start
+                        while len(mg_sigma) < fill_num and cur_start > min_time:
+                            cur_start = cur_start - pd.Timedelta(days=14)
+                            mg_sigma = all_mg[(all_mg["point_time"] > cur_start) & (all_mg["point_time"] <= sigma_end)]
+                        sigma_df = pd.concat([sigma_df, mg_sigma]).drop_duplicates()
+                mean_df_all.append(mean_df.assign(GroupName=gname, ChartName=cname))
+                sigma_df_all.append(sigma_df.assign(GroupName=gname, ChartName=cname))
+                mean_stats = mean_df.groupby("matching_group")["point_val"].agg(['mean', 'count']).reset_index()
+                sigma_stats = sigma_df.groupby("matching_group")["point_val"].agg(['std']).reset_index()
+                group_stats = pd.merge(mean_stats, sigma_stats, on="matching_group", how="outer")
+                group_stats = group_stats.fillna({"mean": 0, "std": 0, "count": 0})
+                n_groups = len(group_stats)
+                if n_groups == 2:
+                    self._analyze_two_groups(group_stats, gname, cname, characteristic[0], results)
+                else:
+                    self._analyze_multiple_groups_time(mean_df, sigma_df, group_stats, gname, cname, characteristic[0], results)
             if mean_df_all:
                 mean_df_concat = pd.concat(mean_df_all, ignore_index=True)
                 mean_grouped = mean_df_concat.groupby(["GroupName", "ChartName"])
@@ -417,10 +496,27 @@ class ToolMatchingWidget(QtWidgets.QWidget):
         - mean, std, count: 來自 mean_df（一個月 window，補到5筆）
         - median_sigma: 來自 sigma_df（半年 window，補到5筆）
         """
-        mean_median = mean_df["point_val"].median() if not mean_df.empty else 0
-        # median_sigma 來自半年 window（sigma_df），每個 matching_group 用半年 window 算 std，再取 median
+        # 只納入樣本數 >= 5 的 group 計算 median
+        valid_mean_df = mean_df.groupby("matching_group").filter(lambda x: len(x) >= 5)
         sigma_by_group = sigma_df.groupby("matching_group")["point_val"].std()
-        median_sigma = sigma_by_group.median() if not sigma_by_group.empty else 0
+        valid_groups = group_stats[group_stats['count'] >= 5]['matching_group']
+        valid_sigma = sigma_by_group[valid_groups] if not valid_groups.empty else pd.Series(dtype=float)
+        # 防呆：如果有效 group 只有一個，全部標記資料不足
+        if len(valid_groups) <= 1:
+            for i, row in group_stats.iterrows():
+                group = row["matching_group"]
+                mean = row["mean"]
+                std = row["std"]
+                n = row["count"]
+                results.append([
+                    gname, cname, group, "group_all",
+                    '資料不足', '資料不足', 
+                    self.get_k_value(n), mean, std, 
+                    '-', '-', n
+                ])
+            return
+        mean_median = valid_mean_df["point_val"].median() if not valid_mean_df.empty else 0
+        median_sigma = valid_sigma.median() if not valid_sigma.empty else 0
         for i, row in group_stats.iterrows():
             group = row["matching_group"]
             mean = row["mean"]
@@ -465,29 +561,29 @@ class ToolMatchingWidget(QtWidgets.QWidget):
         """分析兩台設備的匹配情況"""
         row1 = group_stats.iloc[0]
         row2 = group_stats.iloc[1]
-        
+
         group1 = row1["matching_group"]
         group2 = row2["matching_group"]
         mean1, std1, n1 = row1["mean"], row1["std"], row1["count"]
         mean2, std2, n2 = row2["mean"], row2["std"], row2["count"]
-        
+
         min_sigma = min(std1, std2)
-        
-        # 檢查樣本數量
+
+        # 統一格式：第4欄都用 'group_all'，與多群分析一致
+        # mean_median, sigma_median 欄位（兩組時用 mean2, min_sigma 或 mean1, min_sigma）
+        # 這裡用 mean2, min_sigma for group1, mean1, min_sigma for group2
+
         if n1 < 5 or n2 < 5:
-            # 樣本數不足，不進行比較，添加"資料不足"標記
             results.append([
-                gname, cname, group1, group2,
-                '資料不足', '資料不足', 
-                self.get_k_value(n1), mean1, std1, 
+                gname, cname, group1, 'group_all',
+                '資料不足', '資料不足',
+                self.get_k_value(n1), mean1, std1,
                 mean2, min_sigma, n1
             ])
-            
-            # 反向比較也標記為資料不足
             results.append([
-                gname, cname, group2, group1,
-                '資料不足', '資料不足', 
-                self.get_k_value(n2), mean2, std2, 
+                gname, cname, group2, 'group_all',
+                '資料不足', '資料不足',
+                self.get_k_value(n2), mean2, std2,
                 mean1, min_sigma, n2
             ])
             return
@@ -495,56 +591,61 @@ class ToolMatchingWidget(QtWidgets.QWidget):
         k1 = self.get_k_value(n1)
         k2 = self.get_k_value(n2)
 
-        # 檢查 k1 是否為 "不比較"
         if k1 == "不比較":
-            # 樣本數不足，使用 "資料不足" 標記
             results.append([
-                gname, cname, group1, group2,
-                '資料不足', '資料不足', 
-                '不比較', round(mean1, 2), round(std1, 2), 
+                gname, cname, group1, 'group_all',
+                '資料不足', '資料不足',
+                '不比較', round(mean1, 2), round(std1, 2),
                 round(mean2, 2), round(min_sigma, 2), n1
             ])
         else:
-            # 正常比較情況
-            # 分析 Group1 vs Group2 (直接使用絕對值)
             mean_index_1 = abs(mean1 - mean2) / min_sigma if min_sigma > 0 else float('inf')
             sigma_index_1 = std1 / min_sigma if min_sigma > 0 else float('inf')
-            
-            # 無論是否匹配都添加結果，保證所有比較都出現在報表中
             results.append([
-                gname, cname, group1, group2,
-                round(mean_index_1, 2), round(sigma_index_1, 2), 
-                round(k1, 2), round(mean1, 2), round(std1, 2), 
+                gname, cname, group1, 'group_all',
+                round(mean_index_1, 2), round(sigma_index_1, 2),
+                round(k1, 2), round(mean1, 2), round(std1, 2),
                 round(mean2, 2), round(min_sigma, 2), n1
             ])
 
-        # 檢查 k2 是否為 "不比較"
         if k2 == "不比較":
-            # 樣本數不足，使用 "資料不足" 標記
             results.append([
-                gname, cname, group2, group1,
-                '資料不足', '資料不足', 
-                '不比較', round(mean2, 2), round(std2, 2), 
+                gname, cname, group2, 'group_all',
+                '資料不足', '資料不足',
+                '不比較', round(mean2, 2), round(std2, 2),
                 round(mean1, 2), round(min_sigma, 2), n2
             ])
         else:
-            # 正常比較情況
-            # 分析 Group2 vs Group1 (直接使用絕對值)
             mean_index_2 = abs(mean2 - mean1) / min_sigma if min_sigma > 0 else float('inf')
             sigma_index_2 = std2 / min_sigma if min_sigma > 0 else float('inf')
-            
-            # 無論是否匹配都添加結果，保證所有比較都出現在報表中
             results.append([
-                gname, cname, group2, group1,
-                round(mean_index_2, 2), round(sigma_index_2, 2), 
-                round(k2, 2), round(mean2, 2), round(std2, 2), 
+                gname, cname, group2, 'group_all',
+                round(mean_index_2, 2), round(sigma_index_2, 2),
+                round(k2, 2), round(mean2, 2), round(std2, 2),
                 round(mean1, 2), round(min_sigma, 2), n2
             ])
 
     def _analyze_multiple_groups(self, subdf, group_stats, gname, cname, characteristic, results):
         """分析多台設備的匹配情況 (mean matching index 分母都用 median_sigma)"""
-        mean_median = subdf["point_val"].median()
-        median_sigma = group_stats['std'].median()
+        # 只納入樣本數 >= 5 的 group 計算 median
+        valid_stats = group_stats[group_stats['count'] >= 5]
+        if valid_stats.shape[0] <= 1:
+            # 只有一個有效群組，全部標記資料不足
+            for i, row in group_stats.iterrows():
+                group = row["matching_group"]
+                mean = row["mean"]
+                std = row["std"]
+                n = row["count"]
+                results.append([
+                    gname, cname, group, "group_all",
+                    '資料不足', '資料不足', 
+                    self.get_k_value(n), mean, std, 
+                    '-', '-', n
+                ])
+            return
+
+        mean_median = valid_stats['mean'].median() if not valid_stats.empty else 0
+        median_sigma = valid_stats['std'].median() if not valid_stats.empty else 0
 
         for i, row in group_stats.iterrows():
             group = row["matching_group"]
@@ -919,9 +1020,8 @@ class ToolMatchingWidget(QtWidgets.QWidget):
             # 這些導入是必要的，因為 Matplotlib 在子線程或不同上下文中可能需要重新導入
             import matplotlib.pyplot as plt
             from matplotlib import cm
-            import numpy as np # 修正 np 未定義的問題
+            import numpy as np
         except ImportError:
-            # 在 run_analysis 開始時已經有檢查，但這裡再次確認以防萬一
             print("[ERROR] Matplotlib is not installed.")
             return
 
