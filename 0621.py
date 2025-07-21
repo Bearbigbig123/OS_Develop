@@ -2305,6 +2305,8 @@ class SplitDataWidget(QtWidgets.QWidget):
         description_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
         main_layout.addWidget(description_label, 0, 0, 1, 2) # Row 0, Col 0, Span 1 row, 2 columns
 
+        # ...existing code...
+
         # --- 輸入檔案選擇區塊 ---
         # 使用 QFormLayout 在 QGroupBox 內組織標籤和輸入/按鈕對
         input_group_box = QtWidgets.QGroupBox("1. 選擇輸入檔案")
@@ -2326,7 +2328,7 @@ class SplitDataWidget(QtWidgets.QWidget):
         input_row_layout.addWidget(self.input_path_entry)
         input_row_layout.addWidget(input_button)
         input_layout.addRow(input_row_layout)
-        main_layout.addWidget(input_group_box, 1, 0, 1, 2) # Row 1, Col 0, Span 1 row, 2 columns
+        main_layout.addWidget(input_group_box, 1, 0, 1, 2) # Row 2, Col 0, Span 1 row, 2 columns
 
         # --- 輸出資料夾選擇區塊 ---
         output_group_box = QtWidgets.QGroupBox("2. 選擇輸出資料夾")
@@ -2352,17 +2354,35 @@ class SplitDataWidget(QtWidgets.QWidget):
 
         # --- 處理模式選擇區塊 ---
         mode_group_box = QtWidgets.QGroupBox("3. 選擇處理模式")
-        mode_layout = QtWidgets.QFormLayout(mode_group_box)
+        mode_layout = QtWidgets.QHBoxLayout(mode_group_box)
         mode_layout.setContentsMargins(15, 20, 15, 15)
-        
+
         mode_label = QtWidgets.QLabel("選擇檔案類型:")
         self.processing_mode_combo = QtWidgets.QComboBox()
         self.processing_mode_combo.addItems(["Type3_Horizontal (水平展開)", "Type2_Vertical (垂直堆疊)"])
-        # 將顯示文本映射到內部處理模式
+        self.processing_mode_combo.setFixedWidth(250)  # 設定較窄寬度
         self.processing_mode_combo.currentIndexChanged.connect(self._update_processing_mode)
         self._current_processing_mode = "Type3_Horizontal" # 預設內部模式
 
-        mode_layout.addRow(mode_label, self.processing_mode_combo)
+        mode_layout.addWidget(mode_label)
+        mode_layout.addWidget(self.processing_mode_combo)
+
+
+        # --- 下載範例按鈕（垂直排列，推到最右側）---
+        mode_layout.addStretch(1)
+        example_buttons_layout = QtWidgets.QVBoxLayout()
+        self.download_example_button = QtWidgets.QPushButton("下載 Type3 範例")
+        self.download_example_button.setFixedSize(150, 36)
+        self.download_example_button.clicked.connect(self.download_type3_example)
+        example_buttons_layout.addWidget(self.download_example_button)
+
+        self.download_type2_example_button = QtWidgets.QPushButton("下載 Type2 範例")
+        self.download_type2_example_button.setFixedSize(150, 36)
+        self.download_type2_example_button.clicked.connect(self.download_type2_example)
+        example_buttons_layout.addWidget(self.download_type2_example_button)
+
+        mode_layout.addLayout(example_buttons_layout)
+
         main_layout.addWidget(mode_group_box, 3, 0, 1, 2) # Row 3, Col 0, Span 1 row, 2 columns
 
         # --- 處理按鈕 ---
@@ -2384,14 +2404,56 @@ class SplitDataWidget(QtWidgets.QWidget):
         self.progress_bar.setFormat("處理進度: %p%")
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(False) # 預設隱藏
-        main_layout.addWidget(self.progress_bar, 5, 0, 1, 2) # Row 5
 
         self.status_label = QtWidgets.QLabel("準備就緒。")
         self.status_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.status_label.setStyleSheet("color: #607D8B; font-style: italic;")
-        main_layout.addWidget(self.status_label, 6, 0, 1, 2) # Row 6
 
+        main_layout.addWidget(self.progress_bar, 5, 0, 1, 2) # Row 5
+        main_layout.addWidget(self.status_label, 6, 0, 1, 2) # Row 6
         main_layout.setRowStretch(7, 1) # 將所有內容推到頂部
+
+    def download_type2_example(self):
+        import csv
+        from PyQt6 import QtWidgets
+        columns = ["GroupName", "ChartName", "point_time", "Batch_ID", "point_val"]
+        data = [
+            ["Group1", "A", "2025/3/10 00:45", 123, 56.5],
+            ["Group1", "A", "2025/3/11 00:45", 123, 56.6],
+            ["Group1", "A", "2025/3/12 00:45", 123, 56.5],
+            ["Group1", "B", "2025/3/10 00:45", 123, 84],
+            ["Group1", "B", "2025/3/11 00:45", 123, 84.2],
+            ["Group1", "B", "2025/3/12 00:45", 123, 83.8],
+        ]
+        save_path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "儲存 type2 範例檔", "type2_example.csv", "CSV 檔案 (*.csv)")
+        if save_path:
+            with open(save_path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow(columns)
+                writer.writerows(data)
+            QtWidgets.QMessageBox.information(self, "完成", f"已儲存 {save_path}")
+    def download_type3_example(self):
+        import csv
+        from PyQt6 import QtWidgets
+        # 範例資料
+        data = [
+            ["2025/3/10 00:45", 123, "", 56.5, 84, 123.3, 140, 0.0065, 16820, 16811, -0.11, -0.07, -0.06, 9044],
+            ["2025/3/11 00:45", 123, "", 56.6, 84.2, 124, 140, 0.0065, 16748, 16813, -0.11, -0.06, -0.03, 9065],
+            ["2025/3/12 00:45", 123, "", 56.5, 83.8, 123, 139.7, 0.0065, 16822, 16822, -0.1, -0.05, -0.13, 9030],
+        ]
+        columns1 = ["point_time", "Batch_ID", "GroupName", "Group1", "Group1", "Group1", "Group1", "Group1", "Group1", "Group1", "Group1", "Group1", "Group1", "Group1"]
+        columns2 = ["", "", "ChartName", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"]
+
+        save_path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "儲存 type3 範例檔", "type3_example.csv", "CSV 檔案 (*.csv)")
+        if save_path:
+            with open(save_path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f, delimiter=",")
+                writer.writerow(columns1)
+                writer.writerow(columns2)
+                for row in data:
+                    writer.writerow(row)
+            QtWidgets.QMessageBox.information(self, "完成", f"已儲存 {save_path}")
+
 
     def apply_styles(self):
         """應用 QSS 樣式表。"""
@@ -2444,16 +2506,18 @@ class SplitDataWidget(QtWidgets.QWidget):
             QPushButton:pressed {
                 background-color: #1F618D;
             }
-            #processButton { /* 使用物件名稱進行特定樣式設定 */
-                background-color: #344CB7; /*  
+            #processButton {
+                background-color: #344CB7;
                 font-size: 16px;
                 padding: 12px 25px;
+                border-radius: 8px;
             }
             #processButton:hover {
-                background-color: #218838;
+                background-color: #2980B9;
+                color: #fff;
             }
             #processButton:pressed {
-                background-color: #1A522A;
+                background-color: #1F618D;
             }
             QComboBox {
                 border: 1px solid #BDC3C7;
@@ -2462,16 +2526,8 @@ class SplitDataWidget(QtWidgets.QWidget):
                 background-color: #ECF0F1;
                 selection-background-color: #3498DB;
             }
-            QComboBox::drop-down {
-                border-left: 1px solid #BDC3C7;
-                border-top-right-radius: 5px;
-                border-bottom-right-radius: 5px;
-                width: 25px;
-            }
-            QComboBox::down-arrow {
-                image: url(icons/arrow_down.png); /* 如果有自定義圖標，放這裡 */
-                /* 範例：如果沒有圖標，可以使用 CSS 繪製 */
-            }
+
+
             QProgressBar {
                 border: 1px solid #BDC3C7;
                 border-radius: 5px;
@@ -2479,7 +2535,7 @@ class SplitDataWidget(QtWidgets.QWidget):
                 background-color: #ECF0F1;
             }
             QProgressBar::chunk {
-                background-color: #344CB7; /*  */
+                background-color: #344CB7;
                 border-radius: 5px;
             }
         """)
