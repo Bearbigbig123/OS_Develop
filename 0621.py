@@ -6,7 +6,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
-# from concurrent.futures import ThreadPoolExecutorf
 import traceback
 # Excel 和圖片處理
 from openpyxl import Workbook
@@ -21,7 +20,8 @@ from PyQt6 import QtWidgets, QtGui, QtCore
 from PyQt6.QtWidgets import QMessageBox, QLabel, QVBoxLayout, QScrollArea, QGridLayout, QPushButton
 from PIL import Image
 from PIL.ImageQt import ImageQt
-
+plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'SimHei', 'Arial Unicode MS', 'Noto Sans CJK TC']
+plt.rcParams['axes.unicode_minus'] = False  # 正確顯示負號
 
 
 def load_execution_time(raw_data_file):
@@ -76,6 +76,7 @@ def load_execution_time(raw_data_file):
         return None
 
 def load_chart_information(raw_data_file):
+    import pandas as pd
     print("載入圖表信息...")
     all_charts_info = pd.read_excel(raw_data_file, sheet_name='Chart', engine='openpyxl')
     
@@ -87,6 +88,8 @@ def load_chart_information(raw_data_file):
     return all_charts_info
 
 def preprocess_raw_df(raw_df):
+    import numpy as np
+    import pandas as pd
     raw_df.replace([np.inf, -np.inf, 'na', 'NA', 'NaN', 'nan'], np.nan, inplace=True)
     required_columns = ['GroupName', 'ChartName', 'point_val', 'Batch_ID', 'point_time']
     missing_columns = [col for col in required_columns if col not in raw_df.columns]
@@ -102,6 +105,7 @@ def preprocess_raw_df(raw_df):
     return raw_df.astype(column_types)
 
 def format_datetime(dt):
+    import pandas as pd
     try:
         return pd.to_datetime(dt, format='%Y/%m/%d %H:%M', errors='coerce')
     except Exception as e:
@@ -109,12 +113,14 @@ def format_datetime(dt):
         return pd.NaT
 
 def format_and_clean_data(raw_df, chart_info):
+    import pandas as pd
     raw_df['point_time'] = raw_df['point_time'].apply(format_datetime)
     create_time = pd.to_datetime(chart_info['CHART_CREATE_TIME'], format="%m/%d/%Y %I:%M:%S %p", errors='coerce')
     raw_df.dropna(subset=['point_val', 'point_time'], inplace=True)
     raw_df = raw_df[raw_df['point_time'] >= create_time]
     return raw_df
 def update_chart_limits(raw_df, chart_info):
+    import numpy as np
     # 排序並重設索引
     raw_df.sort_values(by='point_time', inplace=True)
     raw_df.reset_index(drop=True, inplace=True)
@@ -140,6 +146,7 @@ def update_chart_limits(raw_df, chart_info):
     return raw_df, chart_info
 
 def exclude_oos_data(raw_df):
+    import pandas as pd
     usl = raw_df['usl_val'].iat[0]
     lsl = raw_df['lsl_val'].iat[0]
     
@@ -197,6 +204,7 @@ def find_matching_file(directory, group_name, chart_name):
 
 # 優化後的 get_percentiles 函數
 def get_percentiles(values):
+    import numpy as np
     values = np.array(values)  # 確保數值是 NumPy 陣列，這樣計算會更快
     return {
         'P05': np.percentile(values, 5),
@@ -1072,9 +1080,13 @@ def plot_weekly_spc_chart(raw_df, chart_info, weekly_start_date, weekly_end_date
     plt.plot(x_values, raw_df_weekly['point_val'], color='#5863F8', marker='o', linestyle='-')
 
     for i in range(len(raw_df_weekly)):
-        weekly_data_subset = raw_df_weekly.iloc[:i+1].tail(15)
-        if not weekly_data_subset.empty:
-            rules = check_rules(weekly_data_subset.copy(), chart_info)
+        # 找出這個當周點在原始 raw_df 的 index
+        current_time = raw_df_weekly['point_time'].iloc[i]
+        idx_in_raw = raw_df[raw_df['point_time'] == current_time].index[0]
+        # 用原始 raw_df 的前 idx_in_raw+1 筆資料來檢查（回推到 baseline）
+        full_data_subset = raw_df.iloc[:idx_in_raw+1].tail(15)
+        if not full_data_subset.empty:
+            rules = check_rules(full_data_subset.copy(), chart_info)
             if any(rules.values()):
                 plt.plot(x_values[i], raw_df_weekly['point_val'].iloc[i], 'ro', markersize=10)
 
@@ -1331,7 +1343,7 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
 
         # --- 左側選單區域 ---
         self.left_menu_widget = QtWidgets.QWidget()
-        self.left_menu_widget.setFixedWidth(200) # 設定選單寬度
+        self.left_menu_widget.setFixedWidth(180) # 設定選單寬度
         self.left_menu_widget.setStyleSheet("background-color: #344CB7;") # 選單背景色
         self.left_menu_layout = QtWidgets.QVBoxLayout(self.left_menu_widget)
         self.left_menu_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop) # 按鈕靠頂部對齊
@@ -1341,7 +1353,7 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
         # 選單按鈕
         self.home_button = self._create_menu_button("Home")
         self.split_data_button = self._create_menu_button("Split Data")
-        self.oob_system_button = self._create_menu_button("OOB System")
+        self.oob_system_button = self._create_menu_button("OOB && SPC System")
         self.cpk_calculation_button = self._create_menu_button("Cpk Calculator")
         # --- 新增 Tool Matching 按鈕 ---
         self.tool_matching_button = self._create_menu_button("Tool Matching")
@@ -1780,7 +1792,7 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
         progress_bar.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         return progress_bar
 
-    def create_image_label(self, image_path: str, max_width=500, max_height=800, keep_original_size=False):
+    def create_image_label(self, image_path: str, max_width=450, max_height=350, keep_original_size=False):
         try:
             image = Image.open(image_path)
             qt_image = ImageQt(image)
@@ -1810,7 +1822,9 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
             label.setMaximumSize(max_width, max_height)
 
         return label
+
     def process_charts(self):
+        import time
         self.results = []
         total_charts_count = 0
         skipped_charts_count = 0
@@ -1824,10 +1838,10 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
 
             all_charts_info = load_chart_information(self.filepath)
             total_charts_count = len(all_charts_info)
-            self.progress_bar.setMaximum(total_charts_count)
+            self.progress_bar.setMaximum(100)
 
             if self.display_gui_checkbox.isChecked():
-                 self.add_column_headers()
+                self.add_column_headers()
 
             execution_time = load_execution_time(self.filepath)
 
@@ -1844,8 +1858,8 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
                         print(f" - 原始資料 shape: {raw_df.shape}")
 
                         if 'point_time' in raw_df.columns:
-                             raw_df['point_time'] = pd.to_datetime(raw_df['point_time'], errors='coerce')
-                             raw_df.dropna(subset=['point_time'], inplace=True)
+                            raw_df['point_time'] = pd.to_datetime(raw_df['point_time'], errors='coerce')
+                            raw_df.dropna(subset=['point_time'], inplace=True)
 
                         is_successful, processed_df, updated_chart_info = preprocess_data(chart_info.copy(), raw_df.copy())
 
@@ -1856,6 +1870,14 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
                             print(f" - 預處理後資料 shape: {processed_df.shape}")
                             print(f" - 準備分析圖表: {group_name}/{chart_name}")
 
+                            # 假進度條：每個 chart 處理時讓進度條在這一格內慢慢遞增
+                            fake_steps = 10
+                            for fake_step in range(fake_steps):
+                                percent = int(((i + fake_step / fake_steps) / total_charts_count) * 100)
+                                self.progress_bar.setValue(percent)
+                                QtWidgets.QApplication.processEvents()
+                                time.sleep(0.01)
+
                             result = self.analyze_chart(execution_time, processed_df, updated_chart_info)
 
                             if result:
@@ -1864,29 +1886,32 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
 
                                 if self.display_gui_checkbox.isChecked():
                                     if 'chart_path' in result and 'weekly_chart_path' in result:
-                                         self.display_image(result, len(self.results) - 1)
-                                         print(f" - 顯示圖表完成: {group_name}/{chart_name}")
+                                        self.display_image(result, len(self.results) - 1)
+                                        print(f" - 顯示圖表完成: {group_name}/{chart_name}")
                                     else:
-                                         print(f"[Warning] 圖表 {group_name}/{chart_name} 缺少圖片路徑，無法顯示。")
+                                        print(f"[Warning] 圖表 {group_name}/{chart_name} 缺少圖片路徑，無法顯示。")
                                 else:
-                                     print(f" - GUI 顯示已禁用，跳過顯示圖表: {group_name}/{chart_name}")
+                                    print(f" - GUI 顯示已禁用，跳過顯示圖表: {group_name}/{chart_name}")
                             else:
                                 print(f"[Info] 圖表 {group_name}/{chart_name} 分析返回 None，跳過結果記錄。")
                                 skipped_charts_count += 1
 
                     else:
-                         print(f"[Info] 圖表 {group_name}/{chart_name} 對應檔案 {filepath} 不存在，跳過處理。")
-                         skipped_charts_count += 1
+                        print(f"[Info] 圖表 {group_name}/{chart_name} 對應檔案 {filepath} 不存在，跳過處理。")
+                        skipped_charts_count += 1
 
                 except FileNotFoundError:
-                     print(f"[Warning] 檔案未找到，跳過圖表: {group_name}/{chart_name}")
-                     skipped_charts_count += 1
+                    print(f"[Warning] 檔案未找到，跳過圖表: {group_name}/{chart_name}")
+                    skipped_charts_count += 1
                 except Exception as e:
                     print(f"[Error] 處理圖表 {group_name}/{chart_name} 時發生錯誤: {str(e)}")
                     traceback.print_exc()
                     skipped_charts_count += 1
 
-                self.progress_bar.setValue(i + 1)
+                # 真正 chart 處理完後，設到正確進度
+                percent = int(((i + 1) / total_charts_count) * 100)
+                self.progress_bar.setValue(percent)
+                QtWidgets.QApplication.processEvents()
 
             self.update_summary_dashboard(total_charts_count, processed_charts_count, skipped_charts_count)
 
@@ -1894,12 +1919,12 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
                 self.save_results()
                 QtWidgets.QMessageBox.information(self, "Processing Complete", "Results have been saved to result_with_images.xlsx")
             else:
-                 QtWidgets.QMessageBox.information(self, "Processing Complete", "No charts were processed successfully to save.")
+                QtWidgets.QMessageBox.information(self, "Processing Complete", "No charts were processed successfully to save.")
 
         except FileNotFoundError as e:
             self.show_error("File Error", str(e))
         except NotADirectoryError as e:
-             self.show_error("Directory Error", str(e))
+            self.show_error("Directory Error", str(e))
         except Exception as e:
             self.show_error("Processing Error", str(e))
             traceback.print_exc()
@@ -1936,20 +1961,12 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
 
     def validate_files_and_directories(self):
         if not os.path.isdir(self.raw_data_directory):
-             print(f"Creating directory: {self.raw_data_directory}")
-             os.makedirs(self.raw_data_directory, exist_ok=True)
+            print(f"Creating directory: {self.raw_data_directory}")
+            os.makedirs(self.raw_data_directory, exist_ok=True)
 
         if not os.path.exists(self.filepath):
-            print(f"Creating mock All_Chart_Information.xlsx at {self.filepath}")
-            mock_df = load_chart_information("mock_path")
-            mock_df.drop(columns=['group_name', 'chart_name'], errors='ignore', inplace=True)
-            os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
-            try:
-                 mock_df.to_excel(self.filepath, index=False)
-                 print("Mock Excel file created.")
-            except Exception as e:
-                 print(f"Error creating mock Excel file: {e}")
-                 raise FileNotFoundError(f"{self.filepath} does not exist and failed to create mock file.")
+            print(f"[Error] 缺少必要的 All_Chart_Information.xlsx 檔案於 {self.filepath}，請先準備好檔案再執行。")
+            raise FileNotFoundError(f"{self.filepath} does not exist. Please provide the required Excel file.")
 
         print("Files and directories validated.")
 
@@ -1978,6 +1995,13 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
 
 
     def analyze_chart(self, execution_time, raw_df, chart_info):
+        # 補齊 rule_list，確保每個 chart 都有正確的 WE 規則清單
+        if 'rule_list' not in chart_info or not chart_info['rule_list']:
+            rule_list = []
+            for rule in ['WE1','WE2','WE3','WE4','WE5','WE6','WE7','WE8','WE9','WE10']:
+                if chart_info.get(rule, 'N') == 'Y':
+                    rule_list.append(rule)
+            chart_info['rule_list'] = rule_list
             group_name = str(chart_info.get('group_name', chart_info.get('GroupName', 'Unknown')))
             chart_name = str(chart_info.get('chart_name', chart_info.get('ChartName', 'Unknown')))
             print(f" - analyze_chart 開始處理 {group_name}/{chart_name}")
@@ -2057,6 +2081,8 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
         violated_rules = result.get('violated_rules', {})
         we_true_keys = [k for k, v in violated_rules.items() if v]
         result['WE_Rule'] = ', '.join(we_true_keys) if we_true_keys else 'N/A'
+        # 只要當週有任何點違規就亮 HL
+        result['HL_WE'] = 'HIGHLIGHT' if we_true_keys else 'NO_HIGHLIGHT'
 
         oob_true_keys = [k for k in OOB_KEYS if result.get(k) == 'HIGHLIGHT']
         result['OOB_Rule'] = ', '.join(oob_true_keys) if oob_true_keys else 'N/A'
@@ -2434,7 +2460,6 @@ class SplitDataWidget(QtWidgets.QWidget):
             QtWidgets.QMessageBox.information(self, "完成", f"已儲存 {save_path}")
     def download_type3_example(self):
         import csv
-        from PyQt6 import QtWidgets
         # 範例資料
         data = [
             ["2025/3/10 00:45", 123, "", 56.5, 84, 123.3, 140, 0.0065, 16820, 16811, -0.11, -0.07, -0.06, 9044],

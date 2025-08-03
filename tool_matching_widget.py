@@ -64,7 +64,7 @@ class ToolMatchingWidget(QtWidgets.QWidget):
         file_layout.addWidget(file_btn)
 
         # 新增 temp 按鈕
-        temp_btn = QtWidgets.QPushButton("💾 temp")
+        temp_btn = QtWidgets.QPushButton("💾 範例")
         temp_btn.setFont(btn_font)
         temp_btn.setFixedWidth(120)
         temp_btn.clicked.connect(self.generate_temp_csv)
@@ -539,8 +539,14 @@ class ToolMatchingWidget(QtWidgets.QWidget):
                     mean_index = abs(mean - mean_median) / median_sigma
                 sigma_index = std / median_sigma
             else:
-                mean_index = float('inf')
-                sigma_index = float('inf')
+                # 分母為零時，判斷所有 mean 是否相等
+                all_means = group_stats['mean'].tolist() if not group_stats.empty else [mean]
+                if len(set([round(m, 8) for m in all_means])) == 1:
+                    mean_index = 0
+                    sigma_index = 0
+                else:
+                    mean_index = float('inf')
+                    sigma_index = float('inf')
             K = self.get_k_value(n)
             if K == "不比較":
                 results.append([
@@ -591,6 +597,19 @@ class ToolMatchingWidget(QtWidgets.QWidget):
         k1 = self.get_k_value(n1)
         k2 = self.get_k_value(n2)
 
+        # 分母為零時，判斷 mean 是否全相等
+        if min_sigma > 0:
+            mean_index_1 = abs(mean1 - mean2) / min_sigma
+            sigma_index_1 = std1 / min_sigma
+        else:
+            all_means = [mean1, mean2]
+            if len(set([round(m, 8) for m in all_means])) == 1:
+                mean_index_1 = 0
+                sigma_index_1 = 0
+            else:
+                mean_index_1 = float('inf')
+                sigma_index_1 = float('inf')
+
         if k1 == "不比較":
             results.append([
                 gname, cname, group1, 'group_all',
@@ -599,14 +618,25 @@ class ToolMatchingWidget(QtWidgets.QWidget):
                 round(mean2, 2), round(min_sigma, 2), n1
             ])
         else:
-            mean_index_1 = abs(mean1 - mean2) / min_sigma if min_sigma > 0 else float('inf')
-            sigma_index_1 = std1 / min_sigma if min_sigma > 0 else float('inf')
             results.append([
                 gname, cname, group1, 'group_all',
                 round(mean_index_1, 2), round(sigma_index_1, 2),
                 round(k1, 2), round(mean1, 2), round(std1, 2),
                 round(mean2, 2), round(min_sigma, 2), n1
             ])
+
+        # 第二組
+        if min_sigma > 0:
+            mean_index_2 = abs(mean2 - mean1) / min_sigma
+            sigma_index_2 = std2 / min_sigma
+        else:
+            all_means = [mean1, mean2]
+            if len(set([round(m, 8) for m in all_means])) == 1:
+                mean_index_2 = 0
+                sigma_index_2 = 0
+            else:
+                mean_index_2 = float('inf')
+                sigma_index_2 = float('inf')
 
         if k2 == "不比較":
             results.append([
@@ -616,8 +646,6 @@ class ToolMatchingWidget(QtWidgets.QWidget):
                 round(mean1, 2), round(min_sigma, 2), n2
             ])
         else:
-            mean_index_2 = abs(mean2 - mean1) / min_sigma if min_sigma > 0 else float('inf')
-            sigma_index_2 = std2 / min_sigma if min_sigma > 0 else float('inf')
             results.append([
                 gname, cname, group2, 'group_all',
                 round(mean_index_2, 2), round(sigma_index_2, 2),
@@ -672,8 +700,14 @@ class ToolMatchingWidget(QtWidgets.QWidget):
                     mean_index = abs(mean - mean_median) / median_sigma
                 sigma_index = std / median_sigma
             else:
-                mean_index = float('inf')
-                sigma_index = float('inf')
+                # 分母為零時，判斷所有 mean 是否相等
+                all_means = group_stats['mean'].tolist() if not group_stats.empty else [mean]
+                if len(set([round(m, 8) for m in all_means])) == 1:
+                    mean_index = 0
+                    sigma_index = 0
+                else:
+                    mean_index = float('inf')
+                    sigma_index = float('inf')
 
             K = self.get_k_value(n)
 
