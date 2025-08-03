@@ -27,7 +27,7 @@ class ToolMatchingWidget(QtWidgets.QWidget):
 
 
     def init_ui(self):
-        self.setWindowTitle("Tool Matching 分析")
+        self.setWindowTitle("Tool Matching ")
         self.resize(1200, 800)
 
         # 主佈局
@@ -38,7 +38,7 @@ class ToolMatchingWidget(QtWidgets.QWidget):
         top_layout_widget = QtWidgets.QWidget()
         top_layout = QtWidgets.QVBoxLayout(top_layout_widget)
 
-        title = QtWidgets.QLabel("<h2 style='color:#34495E;'>Tool Matching 分析</h2>")
+        title = QtWidgets.QLabel("<h2 style='color:#34495E;'>Tool Matching </h2>")
         # 強制套用微軟正黑體於標題（即使是 HTML）
         title_font = QtGui.QFont("Microsoft JhengHei")
         title_font.setPointSize(16)
@@ -72,8 +72,55 @@ class ToolMatchingWidget(QtWidgets.QWidget):
 
         top_layout.addLayout(file_layout)
 
-        # 新增補滿筆數欄位
+        # 先插入 mean/sigma index門檻，再插入補滿樣本數欄位
+        mean_threshold_layout = QtWidgets.QHBoxLayout()
+        self.mean_index_checkbox = QtWidgets.QCheckBox()
+        self.mean_index_checkbox.setText("")
+        self.mean_index_checkbox.setChecked(False)
+        mean_threshold_label = QtWidgets.QLabel("Mean Index 門檻：")
+        mean_threshold_label.setFont(QtGui.QFont("Microsoft JhengHei", 11))
+        self.mean_index_threshold_spin = QtWidgets.QDoubleSpinBox()
+        self.mean_index_threshold_spin.setRange(0, 10)
+        self.mean_index_threshold_spin.setValue(1.0)
+        self.mean_index_threshold_spin.setSingleStep(0.1)
+        self.mean_index_threshold_spin.setFont(QtGui.QFont("Microsoft JhengHei", 11))
+        self.mean_index_threshold_spin.setEnabled(False)
+        mean_threshold_layout.addWidget(self.mean_index_checkbox)
+        mean_threshold_layout.addWidget(mean_threshold_label)
+        mean_threshold_layout.addWidget(self.mean_index_threshold_spin)
+        mean_threshold_layout.addStretch(1)
+        def on_mean_checkbox_changed(state):
+            self.mean_index_threshold_spin.setEnabled(self.mean_index_checkbox.isChecked())
+        self.mean_index_checkbox.stateChanged.connect(on_mean_checkbox_changed)
+
+        sigma_threshold_layout = QtWidgets.QHBoxLayout()
+        self.sigma_index_checkbox = QtWidgets.QCheckBox()
+        self.sigma_index_checkbox.setText("")
+        self.sigma_index_checkbox.setChecked(False)
+        sigma_threshold_label = QtWidgets.QLabel("Sigma Index 門檻：")
+        sigma_threshold_label.setFont(QtGui.QFont("Microsoft JhengHei", 11))
+        self.sigma_index_threshold_spin = QtWidgets.QDoubleSpinBox()
+        self.sigma_index_threshold_spin.setRange(0, 10)
+        self.sigma_index_threshold_spin.setValue(2.0)
+        self.sigma_index_threshold_spin.setSingleStep(0.1)
+        self.sigma_index_threshold_spin.setFont(QtGui.QFont("Microsoft JhengHei", 11))
+        self.sigma_index_threshold_spin.setEnabled(False)
+        sigma_threshold_layout.addWidget(self.sigma_index_checkbox)
+        sigma_threshold_layout.addWidget(sigma_threshold_label)
+        sigma_threshold_layout.addWidget(self.sigma_index_threshold_spin)
+        sigma_threshold_layout.addStretch(1)
+        def on_sigma_checkbox_changed(state):
+            self.sigma_index_threshold_spin.setEnabled(self.sigma_index_checkbox.isChecked())
+        self.sigma_index_checkbox.stateChanged.connect(on_sigma_checkbox_changed)
+
+        top_layout.addLayout(mean_threshold_layout)
+        top_layout.addLayout(sigma_threshold_layout)
+
+
         fillnum_layout = QtWidgets.QHBoxLayout()
+        self.fillnum_checkbox = QtWidgets.QCheckBox()
+        self.fillnum_checkbox.setText("")
+        self.fillnum_checkbox.setChecked(False)
         fillnum_label = QtWidgets.QLabel("補滿樣本數：")
         fillnum_label.setFont(QtGui.QFont("Microsoft JhengHei", 11))
         self.fillnum_spin = QtWidgets.QSpinBox()
@@ -81,9 +128,14 @@ class ToolMatchingWidget(QtWidgets.QWidget):
         self.fillnum_spin.setMaximum(100)
         self.fillnum_spin.setValue(5)
         self.fillnum_spin.setFont(QtGui.QFont("Microsoft JhengHei", 11))
+        self.fillnum_spin.setEnabled(False)
+        fillnum_layout.addWidget(self.fillnum_checkbox)
         fillnum_layout.addWidget(fillnum_label)
         fillnum_layout.addWidget(self.fillnum_spin)
         fillnum_layout.addStretch(1)
+        def on_fillnum_checkbox_changed(state):
+            self.fillnum_spin.setEnabled(self.fillnum_checkbox.isChecked())
+        self.fillnum_checkbox.stateChanged.connect(on_fillnum_checkbox_changed)
         top_layout.addLayout(fillnum_layout)
 
         # 新增資料篩選模式選擇
@@ -798,8 +850,11 @@ class ToolMatchingWidget(QtWidgets.QWidget):
                 abnormal_type = ""
                 if not is_data_insufficient:
                     try:
-                        mean_abn = float(mean_index) >= 1
-                        sigma_abn = float(sigma_index) >= float(k_value)
+                        # 只有勾選核取方塊才啟用門檻判斷，否則用預設值
+                        mean_threshold = self.mean_index_threshold_spin.value() if self.mean_index_checkbox.isChecked() else 1.0
+                        sigma_threshold = self.sigma_index_threshold_spin.value() if self.sigma_index_checkbox.isChecked() else float(k_value) if k_value not in [None, '', '不比較'] else 2.0
+                        mean_abn = float(mean_index) >= mean_threshold
+                        sigma_abn = float(sigma_index) >= sigma_threshold
                         if mean_abn or sigma_abn:
                             is_abnormal = True
                             if mean_abn and sigma_abn:
@@ -951,8 +1006,10 @@ class ToolMatchingWidget(QtWidgets.QWidget):
         is_data_insufficient = mean_index == '資料不足' or sigma_index == '資料不足' or k_value == '不比較'
         if not is_data_insufficient:
             try:
-                mean_abn = float(mean_index) >= 1
-                sigma_abn = float(sigma_index) >= float(k_value)
+                mean_threshold = self.mean_index_threshold_spin.value() if self.mean_index_checkbox.isChecked() else 1.0
+                sigma_threshold = self.sigma_index_threshold_spin.value() if self.sigma_index_checkbox.isChecked() else float(k_value) if k_value not in [None, '', '不比較'] else 2.0
+                mean_abn = float(mean_index) >= mean_threshold
+                sigma_abn = float(sigma_index) >= sigma_threshold
                 if mean_abn and sigma_abn:
                     abnormal_type = "Mean, Sigma"
                 elif mean_abn:
