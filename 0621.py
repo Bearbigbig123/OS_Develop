@@ -1491,17 +1491,9 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
         return widget
     
     def _create_cpk_calculation_page(self):
-        """
-        Creates the widget for the Cpk Calculator page.
-        This will be a top-level page in the QStackedWidget.
-        """
-        widget = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(widget)
-        label = QtWidgets.QLabel("<h2>Cpk Calculator</h2><p>Here you can input data and calculate Cpk, Cp, etc.</p>")
-        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        # Add your Cpk input fields, buttons, result displays here
-        layout.addWidget(label)
-        return widget   
+        from spc_cpk_dashboard import SPCCpkDashboard
+        widget = SPCCpkDashboard(self)
+        return widget
     
     def setup_summary_dashboard_tab(self):
         self.summary_tab_widget = QtWidgets.QWidget()
