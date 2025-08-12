@@ -524,7 +524,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         ax = self.figure.add_subplot(111)
         # 標題格式: [GroupName@ChartName@Characteristics]
         characteristics = chart_info.get('Characteristics', '')
-        ax.set_title(f"{group_name}@{chart_name}@{characteristics}")
+        ax.set_title(f"{group_name}@{chart_name}@{characteristics}", pad=18)
         ax.set_xlabel("" if self.axis_mode == 'index' else "")
         ax.set_ylabel("值")
         if raw_df is None or raw_df.empty:
@@ -569,6 +569,58 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                 except Exception:
                     pass
             x = range(1, len(y) + 1)
+
+        # === 在圖上標示「當月/上月/上上月」區間 ===
+        if 'point_time' in plot_df.columns and not plot_df.empty:
+            try:
+                import matplotlib.transforms as mtransforms
+                times = pd.to_datetime(plot_df['point_time']).to_numpy()
+                tmin, tmax = times.min(), times.max()
+                # 以 UI 的結束日為基準（若超過資料最新，取資料最新）
+                end_sel = pd.to_datetime(self.end_date.date().toString('yyyy-MM-dd')) + pd.Timedelta(days=1) - pd.Timedelta(milliseconds=1)
+                if end_sel > pd.Timestamp(tmax):
+                    end_sel = pd.Timestamp(tmax)
+                start1 = end_sel - pd.DateOffset(months=1)
+                start2 = end_sel - pd.DateOffset(months=2)
+                start3 = end_sel - pd.DateOffset(months=3)
+                windows = [
+                    (start1, end_sel,  'L0',   '#dbeafe'),
+                    (start2, start1,   'L1',   '#fef9c3'),
+                    (start3, start2,   'L2',   '#ede9fe'),
+                ]
+                text_trans = mtransforms.blended_transform_factory(ax.transData, ax.transAxes)
+                if use_time_axis:
+                    for s, e, lab, col in windows:
+                        s_clip = max(pd.Timestamp(s), pd.Timestamp(tmin))
+                        e_clip = min(pd.Timestamp(e), pd.Timestamp(tmax))
+                        if e_clip <= s_clip:
+                            continue
+                        ax.axvspan(s_clip, e_clip, color=col, alpha=0.25, zorder=0)
+                        x_center = s_clip + (e_clip - s_clip) / 2
+                        ax.text(x_center, 1.04, lab, transform=text_trans, ha='center', va='top', fontsize=9, color='#374151', alpha=0.9)
+                else:
+                    # 對應到等距索引（x: 1..N），區塊邊界用格線中間: 0.5 ~ N+0.5
+                    import numpy as np
+                    n = len(times)
+                    def t2ix_left(t):
+                        return float(np.searchsorted(times, np.datetime64(t), side='left')) + 0.5
+                    def t2ix_right(t):
+                        return float(np.searchsorted(times, np.datetime64(t), side='right')) + 0.5
+                    x_min, x_max = 0.5, n + 0.5
+                    for s, e, lab, col in windows:
+                        s_clip = max(pd.Timestamp(s), pd.Timestamp(tmin))
+                        e_clip = min(pd.Timestamp(e), pd.Timestamp(tmax))
+                        if e_clip <= s_clip:
+                            continue
+                        xl = max(x_min, t2ix_left(s_clip))
+                        xr = min(x_max, t2ix_right(e_clip))
+                        if xr <= xl:
+                            continue
+                        ax.axvspan(xl, xr, color=col, alpha=0.25, zorder=0)
+                        x_center = (xl + xr) / 2.0
+                        ax.text(x_center, 1.04, lab, transform=text_trans, ha='center', va='top', fontsize=9, color='#374151', alpha=0.9)
+            except Exception as _:
+                pass
         # 計算統計線
         usl = chart_info.get('USL', None)
         lsl = chart_info.get('LSL', None)
