@@ -584,17 +584,35 @@ class SPCCpkDashboard(QtWidgets.QWidget):
             ax.scatter([xi for xi, yi in zip(x, y) if yi > usl], [yi for yi in y if yi > usl], color='#dc2626', s=36, zorder=5, label='_nolegend_')
         if lsl is not None:
             ax.scatter([xi for xi, yi in zip(x, y) if yi < lsl], [yi for yi in y if yi < lsl], color='#dc2626', marker='s', s=36, zorder=5, label='_nolegend_')
-        def hline(val, color, label):
-            if val is not None and pd.notna(val):
-                ax.axhline(val, color=color, linestyle='--', linewidth=1.1, label=label)
-        hline(usl, '#ef4444', 'USL')
-        hline(lsl, '#ef4444', 'LSL')
-        hline(target, '#f59e0b', 'Target')
-        hline(mean_val, '#16a34a', 'Mean')
-        ymin, ymax = ax.get_ylim()
-        span = ymax - ymin if ymax > ymin else 1
-        ax.set_ylim(ymin - 0.05*span, ymax + 0.05*span)
-        ax.legend(loc='upper left', fontsize=8)
+        # 計算 y 範圍（納入 USL/LSL/Target/Mean）避免被裁切
+        extra_vals = [v for v in [usl, lsl, target, mean_val]
+                      if v is not None and not (isinstance(v, float) and np.isnan(v))]
+        if len(y) > 0:
+            ymin_sel = float(np.min(y))
+            ymax_sel = float(np.max(y))
+        else:
+            ymin_sel, ymax_sel = (0.0, 1.0)
+        if extra_vals:
+            ymin_sel = min(ymin_sel, min(extra_vals))
+            ymax_sel = max(ymax_sel, max(extra_vals))
+        rng = ymax_sel - ymin_sel
+        margin = 0.05 * rng if rng > 0 else 1.0
+        ax.set_ylim(ymin_sel - margin, ymax_sel + margin)
+
+        # 畫短水平線，並讓文字直接接在線的末端
+        from matplotlib import transforms as mtransforms
+        trans = mtransforms.blended_transform_factory(ax.transAxes, ax.transData)
+        def segment_with_label(val, name, color, va='center'):
+            if val is None or (isinstance(val, float) and np.isnan(val)):
+                return
+            x0, x1 = 0.0, 0.965  # 線更長，文字更貼近右邊界
+            ax.plot([x0, x1], [val, val], transform=trans, color=color, linestyle='--', linewidth=1.1)
+            ax.text(x1, val, name, transform=trans, color=color, va=va, ha='left', fontsize=9)
+
+        segment_with_label(usl, 'USL', '#ef4444', va='center')
+        segment_with_label(lsl, 'LSL', '#ef4444', va='center')
+        segment_with_label(target, 'Target', '#f59e0b', va='center')
+        segment_with_label(mean_val, 'Mean', '#16a34a', va='center')
         # 時間軸格式化
         if use_time_axis:
             try:
