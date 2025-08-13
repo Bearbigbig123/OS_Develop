@@ -62,7 +62,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         top_bar = QtWidgets.QHBoxLayout()
         top_bar.setSpacing(12)
         self.chart_combo = QtWidgets.QComboBox()
-        self.chart_combo.addItem("請選擇 Chart")
+        self.chart_combo.addItem("")
         self.chart_combo.setMinimumWidth(280)
         self.start_date = QtWidgets.QDateEdit(QtCore.QDate.currentDate().addMonths(-3))
         self.start_date.setCalendarPopup(True)
@@ -96,10 +96,38 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         self.export_excel_btn.setStyleSheet(self.recalc_btn.styleSheet())
         lbl_chart = QtWidgets.QLabel("Chart:")
         lbl_chart.setObjectName("plainLabel")
-        lbl_start = QtWidgets.QLabel("起始:")
+        lbl_start = QtWidgets.QLabel("Start:")
         lbl_start.setObjectName("plainLabel")
-        lbl_end = QtWidgets.QLabel("結束:")
+        lbl_end = QtWidgets.QLabel("End:")
         lbl_end.setObjectName("plainLabel")
+        
+        # 新增自訂時間模式按鈕
+        self.custom_range_btn = QtWidgets.QPushButton("Custom Time Mode")
+        self.custom_range_btn.setMinimumHeight(38)
+        self.custom_range_btn.setMinimumWidth(140)
+        self.custom_range_btn.setCheckable(True)  # 可切換狀態
+        self.custom_range_btn.setStyleSheet("""
+            QPushButton {
+                background: #6b7280;
+                color: #fff;
+                border: none;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 600;
+                padding: 8px 16px;
+            }
+            QPushButton:hover {
+                background: #4b5563;
+            }
+            QPushButton:checked {
+                background: #059669;
+                color: #fff;
+            }
+            QPushButton:checked:hover {
+                background: #047857;
+            }
+        """)
+        
         top_bar.addWidget(lbl_chart)
         top_bar.addWidget(self.chart_combo)
         top_bar.addSpacing(6)
@@ -107,6 +135,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         top_bar.addWidget(self.start_date)
         top_bar.addWidget(lbl_end)
         top_bar.addWidget(self.end_date)
+        top_bar.addWidget(self.custom_range_btn)
         top_bar.addStretch(1)
         top_bar.addWidget(self.recalc_btn)
         top_bar.addWidget(self.export_excel_btn)
@@ -207,6 +236,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         self.export_excel_btn.clicked.connect(self.export_chart_info_excel)
         self.prev_chart_btn.clicked.connect(self.prev_chart)
         self.next_chart_btn.clicked.connect(self.next_chart)
+        self.custom_range_btn.clicked.connect(self.on_custom_range_toggle)
         self.apply_theme()
     def export_chart_info_excel(self):
         # 匯出所有 chart 的 group_name@chart_name@characteristics 及 Cpk 指標到 Excel，並加上 debug log
@@ -316,7 +346,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
             characteristics = chart_info.get('Characteristics', '')
             ax.set_title(f"{group_name}@{chart_name}@{characteristics}", pad=18)
             ax.set_xlabel("")
-            ax.set_ylabel("值")
+            ax.set_ylabel("")
             plot_df = self.raw_charts_dict.get(key)
             if plot_df is None or plot_df.empty:
                 ax.text(0.5, 0.5, "無資料", ha='center', va='center', transform=ax.transAxes)
@@ -607,7 +637,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         # 更新下拉選單
         if self.all_charts_info is not None:
             self.chart_combo.clear()
-            self.chart_combo.addItem("請選擇 Chart")
+            self.chart_combo.addItem("Select Chart")
             for _, chart_info in self.all_charts_info.iterrows():
                 self.chart_combo.addItem(f"{chart_info['GroupName']} - {chart_info['ChartName']}")
 
@@ -802,62 +832,138 @@ class SPCCpkDashboard(QtWidgets.QWidget):
     def _update_current_chart_dynamic(self, chart_info: pd.Series):
         group_name = str(chart_info['GroupName'])
         chart_name = str(chart_info['ChartName'])
-        # 重新計算 Cpk 以目前 end_date 為基準
-        end_d = self.end_date.date().toPyDate()
-        # 取得原始資料
-        raw_df = self.raw_charts_dict.get((group_name, chart_name))
-        if raw_df is not None and 'point_time' in raw_df.columns:
-            raw_df_local = raw_df.copy()
-            raw_df_local['point_time'] = pd.to_datetime(raw_df_local['point_time'])
-            latest = raw_df_local['point_time'].max()
-            start1 = pd.to_datetime(end_d) - pd.DateOffset(months=1)
-            print(f"[DEBUG][UI] {group_name}@{chart_name} Cpk區間: {start1.date()} ~ {end_d}")
-        cpk_res = self._recompute_cpk_for_chart(chart_info, end_d)
-        # 改為全部資料 Cpk
-        all_data_cpk = None
-        if raw_df is not None and not raw_df.empty:
-            all_data_cpk = calculate_cpk(raw_df, chart_info)['Cpk']
-        def set_card(key, value, is_percent=False):
-            comp = self.metric_cards[key]
-            if value is None:
-                comp['value_label'].setText('-')
-            else:
-                comp['value_label'].setText(f"{value:.1f}%" if is_percent else f"{value:.3f}")
-
-        # 計算 K 參數
-        kval = None
-        try:
-            usl = chart_info.get('USL', None)
-            lsl = chart_info.get('LSL', None)
-            target = None
-            for key_t in ['Target', 'TARGET', 'TargetValue', '中心線', 'Center']:
-                if key_t in chart_info and pd.notna(chart_info[key_t]):
-                    target = chart_info[key_t]
-                    break
-            mean_val = None
-            raw_df2 = self.raw_charts_dict.get((group_name, chart_name))
-            if raw_df2 is not None and not raw_df2.empty:
-                mean_val = raw_df2['point_val'].mean()
-            rng = (usl - lsl) / 2 if (usl is not None and lsl is not None and (usl-lsl)!=0) else None
-            if mean_val is not None and target is not None and rng:
-                kval = abs(mean_val - target) / rng
-        except Exception:
+        
+        # 判斷是否使用自訂時間模式
+        if self.custom_range_btn.isChecked():
+            # 自訂時間模式：根據 UI 上的起始和結束時間計算
+            start_d = self.start_date.date().toPyDate()
+            end_d = self.end_date.date().toPyDate()
+            start_time = pd.to_datetime(start_d)
+            end_time = pd.to_datetime(end_d) + pd.Timedelta(days=1) - pd.Timedelta(milliseconds=1)
+            
+            # 取得原始資料
+            raw_df = self.raw_charts_dict.get((group_name, chart_name))
+            
+            if raw_df is not None and 'point_time' in raw_df.columns:
+                print(f"[DEBUG][UI] {group_name}@{chart_name} 自訂Cpk區間: {start_d} ~ {end_d}")
+            
+            # 使用自訂範圍計算方法
+            cpk_res = self._compute_cpk_custom_range(raw_df, chart_info, start_time, end_time)
+            
+            # 計算全部資料 Cpk
+            all_data_cpk = None
+            if raw_df is not None and not raw_df.empty:
+                all_data_cpk = calculate_cpk(raw_df, chart_info)['Cpk']
+            
+            # 更新卡片顯示
+            def set_card(key, value, is_percent=False):
+                comp = self.metric_cards[key]
+                if value is None:
+                    comp['value_label'].setText('-')
+                else:
+                    comp['value_label'].setText(f"{value:.1f}%" if is_percent else f"{value:.3f}")
+            
+            # 計算 K 參數（用自訂範圍內的資料）
             kval = None
-        set_card('kval', kval)
-        set_card('cpk', cpk_res.get('Cpk'))
-        set_card('l1', cpk_res.get('Cpk_last_month'))
-        set_card('l2', cpk_res.get('Cpk_last2_month'))
-        set_card('custom', all_data_cpk)
-        cpk = cpk_res.get('Cpk')
-        l1 = cpk_res.get('Cpk_last_month')
-        l2 = cpk_res.get('Cpk_last2_month')
-        r1 = r2 = None
-        if cpk is not None and l1 is not None and l1 != 0 and cpk <= l1:
-            r1 = (1 - (cpk / l1)) * 100
-        if cpk is not None and l1 is not None and l2 is not None and l2 != 0 and cpk <= l1 <= l2:
-            r2 = (1 - (cpk / l2)) * 100
-        set_card('r1', r1, is_percent=True)
-        set_card('r2', r2, is_percent=True)
+            try:
+                usl = chart_info.get('USL', None)
+                lsl = chart_info.get('LSL', None)
+                target = None
+                for key_t in ['Target', 'TARGET', 'TargetValue', '中心線', 'Center']:
+                    if key_t in chart_info and pd.notna(chart_info[key_t]):
+                        target = chart_info[key_t]
+                        break
+                
+                # 用自訂範圍內的資料計算 mean
+                mean_val = None
+                if raw_df is not None and not raw_df.empty and 'point_time' in raw_df.columns:
+                    filtered_df = raw_df[(pd.to_datetime(raw_df['point_time']) >= start_time) & 
+                                        (pd.to_datetime(raw_df['point_time']) <= end_time)]
+                    if not filtered_df.empty:
+                        mean_val = filtered_df['point_val'].mean()
+                elif raw_df is not None and not raw_df.empty:
+                    mean_val = raw_df['point_val'].mean()
+                    
+                rng = (usl - lsl) / 2 if (usl is not None and lsl is not None and (usl-lsl)!=0) else None
+                if mean_val is not None and target is not None and rng:
+                    kval = abs(mean_val - target) / rng
+            except Exception:
+                kval = None
+            
+            # 在自訂模式下，只顯示當月 Cpk，L1 和 L2 設為 "-"
+            set_card('kval', kval)
+            set_card('cpk', cpk_res.get('Cpk'))
+            set_card('l1', None)  # 自訂模式不顯示 L1
+            set_card('l2', None)  # 自訂模式不顯示 L2
+            set_card('custom', all_data_cpk)
+            set_card('r1', None)  # 自訂模式不顯示 R1
+            set_card('r2', None)  # 自訂模式不顯示 R2
+            
+        else:
+            # 原本的邏輯：從結束時間回推三個月
+            end_d = self.end_date.date().toPyDate()
+            raw_df = self.raw_charts_dict.get((group_name, chart_name))
+            
+            if raw_df is not None and 'point_time' in raw_df.columns:
+                raw_df_local = raw_df.copy()
+                raw_df_local['point_time'] = pd.to_datetime(raw_df_local['point_time'])
+                latest = raw_df_local['point_time'].max()
+                start1 = pd.to_datetime(end_d) - pd.DateOffset(months=1)
+                print(f"[DEBUG][UI] {group_name}@{chart_name} Cpk區間: {start1.date()} ~ {end_d}")
+            
+            cpk_res = self._recompute_cpk_for_chart(chart_info, end_d)
+            
+            # 改為全部資料 Cpk
+            all_data_cpk = None
+            if raw_df is not None and not raw_df.empty:
+                all_data_cpk = calculate_cpk(raw_df, chart_info)['Cpk']
+            
+            def set_card(key, value, is_percent=False):
+                comp = self.metric_cards[key]
+                if value is None:
+                    comp['value_label'].setText('-')
+                else:
+                    comp['value_label'].setText(f"{value:.1f}%" if is_percent else f"{value:.3f}")
+
+            # 計算 K 參數
+            kval = None
+            try:
+                usl = chart_info.get('USL', None)
+                lsl = chart_info.get('LSL', None)
+                target = None
+                for key_t in ['Target', 'TARGET', 'TargetValue', '中心線', 'Center']:
+                    if key_t in chart_info and pd.notna(chart_info[key_t]):
+                        target = chart_info[key_t]
+                        break
+                mean_val = None
+                raw_df2 = self.raw_charts_dict.get((group_name, chart_name))
+                if raw_df2 is not None and not raw_df2.empty:
+                    mean_val = raw_df2['point_val'].mean()
+                rng = (usl - lsl) / 2 if (usl is not None and lsl is not None and (usl-lsl)!=0) else None
+                if mean_val is not None and target is not None and rng:
+                    kval = abs(mean_val - target) / rng
+            except Exception:
+                kval = None
+            
+            set_card('kval', kval)
+            set_card('cpk', cpk_res.get('Cpk'))
+            set_card('l1', cpk_res.get('Cpk_last_month'))
+            set_card('l2', cpk_res.get('Cpk_last2_month'))
+            set_card('custom', all_data_cpk)
+            
+            cpk = cpk_res.get('Cpk')
+            l1 = cpk_res.get('Cpk_last_month')
+            l2 = cpk_res.get('Cpk_last2_month')
+            
+            r1 = r2 = None
+            if cpk is not None and l1 is not None and l1 != 0 and cpk <= l1:
+                r1 = (1 - (cpk / l1)) * 100
+            if cpk is not None and l1 is not None and l2 is not None and l2 != 0 and cpk <= l1 <= l2:
+                r2 = (1 - (cpk / l2)) * 100
+                
+            set_card('r1', r1, is_percent=True)
+            set_card('r2', r2, is_percent=True)
+        
         # 依目前日期範圍重畫圖
         self.draw_spc_chart(group_name, chart_name, chart_info)
 
@@ -932,18 +1038,30 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                 import matplotlib.transforms as mtransforms
                 times = pd.to_datetime(plot_df['point_time']).to_numpy()
                 tmin, tmax = times.min(), times.max()
-                # 以 UI 的結束日為基準（若超過資料最新，取資料最新）
-                end_sel = pd.to_datetime(self.end_date.date().toString('yyyy-MM-dd')) + pd.Timedelta(days=1) - pd.Timedelta(milliseconds=1)
-                if end_sel > pd.Timestamp(tmax):
-                    end_sel = pd.Timestamp(tmax)
-                start1 = end_sel - pd.DateOffset(months=1)
-                start2 = end_sel - pd.DateOffset(months=2)
-                start3 = end_sel - pd.DateOffset(months=3)
-                windows = [
-                    (start1, end_sel,  'L0',   '#dbeafe'),
-                    (start2, start1,   'L1',   '#fef9c3'),
-                    (start3, start2,   'L2',   '#ede9fe'),
-                ]
+                
+                # 判斷是否為自訂時間模式
+                if self.custom_range_btn.isChecked():
+                    # 自訂模式：只顯示一個自訂範圍區塊
+                    start_time = pd.to_datetime(self.start_date.date().toString('yyyy-MM-dd'))
+                    end_time = pd.to_datetime(self.end_date.date().toString('yyyy-MM-dd')) + pd.Timedelta(days=1) - pd.Timedelta(milliseconds=1)
+                    
+                    windows = [
+                        (start_time, end_time, 'Custom', '#dbeafe'),
+                    ]
+                else:
+                    # 原本邏輯：從結束時間回推三個月
+                    end_sel = pd.to_datetime(self.end_date.date().toString('yyyy-MM-dd')) + pd.Timedelta(days=1) - pd.Timedelta(milliseconds=1)
+                    if end_sel > pd.Timestamp(tmax):
+                        end_sel = pd.Timestamp(tmax)
+                    start1 = end_sel - pd.DateOffset(months=1)
+                    start2 = end_sel - pd.DateOffset(months=2)
+                    start3 = end_sel - pd.DateOffset(months=3)
+                    windows = [
+                        (start1, end_sel,  'L0',   '#dbeafe'),
+                        (start2, start1,   'L1',   '#fef9c3'),
+                        (start3, start2,   'L2',   '#ede9fe'),
+                    ]
+                
                 text_trans = mtransforms.blended_transform_factory(ax.transData, ax.transAxes)
                 if use_time_axis:
                     for s, e, lab, col in windows:
@@ -1064,3 +1182,41 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         current_idx = self.chart_combo.currentIndex()
         if current_idx < self.chart_combo.count() - 1:
             self.chart_combo.setCurrentIndex(current_idx + 1)
+
+    def on_custom_range_toggle(self):
+        """切換自訂時間模式"""
+        if self.custom_range_btn.isChecked():
+            self.custom_range_btn.setText("✓ Custom Time Mode")
+        else:
+            self.custom_range_btn.setText("Custom Time Mode")
+        
+        # 重新計算當前選中的圖表
+        idx = self.chart_combo.currentIndex() - 1
+        if idx >= 0 and self.all_charts_info is not None:
+            chart_info = self.all_charts_info.iloc[idx]
+            self._update_current_chart_dynamic(chart_info)
+
+    def _compute_cpk_custom_range(self, raw_df: pd.DataFrame, chart_info: pd.Series, start_time: pd.Timestamp, end_time: pd.Timestamp):
+        """根據自訂的起始和結束時間計算 Cpk（只算當月）"""
+        result = {'Cpk': None, 'Cpk_last_month': None, 'Cpk_last2_month': None}
+        
+        if raw_df is None or raw_df.empty:
+            return result
+        
+        if 'point_time' not in raw_df.columns:
+            result['Cpk'] = calculate_cpk(raw_df, chart_info)['Cpk']
+            return result
+        
+        df = raw_df.copy()
+        df['point_time'] = pd.to_datetime(df['point_time'])
+        
+        # 篩選自訂範圍的資料
+        filtered_df = df[(df['point_time'] >= start_time) & (df['point_time'] <= end_time)]
+        
+        if filtered_df.empty:
+            return result
+        
+        # 只計算自訂範圍的 Cpk（當月）
+        result['Cpk'] = calculate_cpk(filtered_df, chart_info)['Cpk']
+        
+        return result
