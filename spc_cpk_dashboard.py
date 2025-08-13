@@ -38,105 +38,6 @@ def calculate_cpk(raw_df, chart_info):
     return {'Cpk': cpk}
 
 class SPCCpkDashboard(QtWidgets.QWidget):
-    def export_all_chart_details(self):
-        """
-        匯出所有 chart 的詳細統計資訊到 Excel。
-        欄位：Chart 名稱、USL、LSL、mean、sigma、Cpk、L1_mean、L1_sigma、L1_Cpk、L2_mean、L2_sigma、L2_Cpk、long_term_mean、long_term_sigma、long_term_Cpk、各段時間區間
-        沒資料的列標註 no data。
-        """
-        import pandas as pd
-        from datetime import datetime
-        rows = []
-        if self.all_charts_info is None:
-            QtWidgets.QMessageBox.warning(self, "警告", "尚未載入圖表資訊，請先執行分析。")
-            return
-        for _, chart_info in self.all_charts_info.iterrows():
-            group_name = str(chart_info['GroupName'])
-            chart_name = str(chart_info['ChartName'])
-            key = (group_name, chart_name)
-            raw_df = self.raw_charts_dict.get(key)
-            usl = chart_info.get('USL', None)
-            lsl = chart_info.get('LSL', None)
-            # 預設值
-            detail = {
-                'Chart': f'{group_name} - {chart_name}',
-                'USL': usl,
-                'LSL': lsl,
-                'mean': 'no data',
-                'sigma': 'no data',
-                'Cpk': 'no data',
-                'L1_mean': 'no data',
-                'L1_sigma': 'no data',
-                'L1_Cpk': 'no data',
-                'L2_mean': 'no data',
-                'L2_sigma': 'no data',
-                'L2_Cpk': 'no data',
-                'long_term_mean': 'no data',
-                'long_term_sigma': 'no data',
-                'long_term_Cpk': 'no data',
-                'L0_period': 'no data',
-                'L1_period': 'no data',
-                'L2_period': 'no data',
-                'long_term_period': 'no data',
-            }
-            if raw_df is not None and not raw_df.empty:
-                # 轉換時間欄位
-                if 'point_time' in raw_df.columns:
-                    df = raw_df.copy()
-                    df['point_time'] = pd.to_datetime(df['point_time'])
-                    tmin = df['point_time'].min()
-                    tmax = df['point_time'].max()
-                    # 以最新資料往回推三個月
-                    end_sel = tmax
-                    start1 = end_sel - pd.DateOffset(months=1)
-                    start2 = end_sel - pd.DateOffset(months=2)
-                    start3 = end_sel - pd.DateOffset(months=3)
-                    # L0: 當月
-                    mask0 = (df['point_time'] > start1) & (df['point_time'] <= end_sel)
-                    mask1 = (df['point_time'] > start2) & (df['point_time'] <= start1)
-                    mask2 = (df['point_time'] > start3) & (df['point_time'] <= start2)
-                    # L0
-                    df0 = df[mask0]
-                    if not df0.empty:
-                        detail['mean'] = round(df0['point_val'].mean(), 3)
-                        detail['sigma'] = round(df0['point_val'].std(), 3)
-                        detail['Cpk'] = calculate_cpk(df0, chart_info)['Cpk']
-                        detail['L0_period'] = f"{df0['point_time'].min().date()} ~ {df0['point_time'].max().date()}"
-                    # L1
-                    df1 = df[mask1]
-                    if not df1.empty:
-                        detail['L1_mean'] = round(df1['point_val'].mean(), 3)
-                        detail['L1_sigma'] = round(df1['point_val'].std(), 3)
-                        detail['L1_Cpk'] = calculate_cpk(df1, chart_info)['Cpk']
-                        detail['L1_period'] = f"{df1['point_time'].min().date()} ~ {df1['point_time'].max().date()}"
-                    # L2
-                    df2 = df[mask2]
-                    if not df2.empty:
-                        detail['L2_mean'] = round(df2['point_val'].mean(), 3)
-                        detail['L2_sigma'] = round(df2['point_val'].std(), 3)
-                        detail['L2_Cpk'] = calculate_cpk(df2, chart_info)['Cpk']
-                        detail['L2_period'] = f"{df2['point_time'].min().date()} ~ {df2['point_time'].max().date()}"
-                    # long term: 全部
-                    if not df.empty:
-                        detail['long_term_mean'] = round(df['point_val'].mean(), 3)
-                        detail['long_term_sigma'] = round(df['point_val'].std(), 3)
-                        detail['long_term_Cpk'] = calculate_cpk(df, chart_info)['Cpk']
-                        detail['long_term_period'] = f"{df['point_time'].min().date()} ~ {df['point_time'].max().date()}"
-                else:
-                    # 沒有時間欄位，全部資料
-                    detail['long_term_mean'] = round(raw_df['point_val'].mean(), 3)
-                    detail['long_term_sigma'] = round(raw_df['point_val'].std(), 3)
-                    detail['long_term_Cpk'] = calculate_cpk(raw_df, chart_info)['Cpk']
-            rows.append(detail)
-        df_out = pd.DataFrame(rows)
-        # 儲存
-        save_path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "匯出所有 Chart 詳細統計", "chart_details.xlsx", "Excel Files (*.xlsx)")
-        if save_path:
-            try:
-                df_out.to_excel(save_path, index=False)
-                QtWidgets.QMessageBox.information(self, "匯出成功", f"已匯出所有 Chart 詳細統計到：{save_path}")
-            except Exception as e:
-                QtWidgets.QMessageBox.critical(self, "匯出失敗", f"匯出 Excel 失敗：{e}")
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("SPC Cpk Dashboard")
@@ -188,27 +89,11 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                 background: #163fae;
             }
         """)
-        # 新增匯出所有 chart 詳細統計按鈕
-        self.export_all_btn = QtWidgets.QPushButton("匯出所有 Chart 詳細統計")
-        self.export_all_btn.setMinimumHeight(38)
-        self.export_all_btn.setMinimumWidth(180)
-        self.export_all_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #059669, stop:1 #10b981);
-                color: #fff;
-                border: none;
-                border-radius: 18px;
-                font-size: 16px;
-                font-weight: bold;
-                padding: 8px 24px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #10b981, stop:1 #059669);
-            }
-            QPushButton:pressed {
-                background: #047857;
-            }
-        """)
+        # 新增下載 Excel 按鈕
+        self.export_excel_btn = QtWidgets.QPushButton("下載 Chart 資訊 Excel")
+        self.export_excel_btn.setMinimumHeight(38)
+        self.export_excel_btn.setMinimumWidth(180)
+        self.export_excel_btn.setStyleSheet(self.recalc_btn.styleSheet())
         lbl_chart = QtWidgets.QLabel("Chart:")
         lbl_chart.setObjectName("plainLabel")
         lbl_start = QtWidgets.QLabel("起始:")
@@ -224,7 +109,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         top_bar.addWidget(self.end_date)
         top_bar.addStretch(1)
         top_bar.addWidget(self.recalc_btn)
-        top_bar.addWidget(self.export_all_btn)
+        top_bar.addWidget(self.export_excel_btn)
         root.addLayout(top_bar)
         # ===== Metric Cards Row =====
         self.metric_cards = {}
@@ -288,8 +173,64 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         self.chart_combo.currentIndexChanged.connect(self.update_cpk_labels)
         self.start_date.dateChanged.connect(self.on_date_changed)
         self.end_date.dateChanged.connect(self.on_date_changed)
-        self.export_all_btn.clicked.connect(self.export_all_chart_details)
+        self.export_excel_btn.clicked.connect(self.export_chart_info_excel)
         self.apply_theme()
+    def export_chart_info_excel(self):
+        # 匯出所有 chart 的 group_name@chart_name@characteristics 及 Cpk 指標到 Excel
+        if self.all_charts_info is None:
+            QtWidgets.QMessageBox.warning(self, "無資料", "尚未載入圖表資訊！")
+            return
+        rows = []
+        for _, chart_info in self.all_charts_info.iterrows():
+            group_name = str(chart_info.get('GroupName', ''))
+            chart_name = str(chart_info.get('ChartName', ''))
+            characteristics = str(chart_info.get('Characteristics', ''))
+            key = (group_name, chart_name)
+            # 取得 Cpk 指標
+            cpk = None
+            cpk_last_month = None
+            cpk_last2_month = None
+            custom_cpk = None
+            r1 = None
+            r2 = None
+            # 目前日期範圍 Cpk
+            if key in self.raw_charts_dict:
+                raw_df = self.raw_charts_dict[key]
+                if raw_df is not None and not raw_df.empty:
+                    # 目前 UI 結束日
+                    end_date = self.end_date.date().toPyDate() if hasattr(self, 'end_date') else None
+                    if end_date:
+                        cpk_res = self._recompute_cpk_for_chart(chart_info, end_date)
+                        cpk = cpk_res.get('Cpk')
+                        cpk_last_month = cpk_res.get('Cpk_last_month')
+                        cpk_last2_month = cpk_res.get('Cpk_last2_month')
+                        # 全部資料 Cpk
+                        custom_cpk = calculate_cpk(raw_df, chart_info)['Cpk']
+                        # r1, r2 計算
+                        if cpk is not None and cpk_last_month is not None and cpk_last_month != 0 and cpk <= cpk_last_month:
+                            r1 = (1 - (cpk / cpk_last_month)) * 100
+                        if cpk is not None and cpk_last_month is not None and cpk_last2_month is not None and cpk_last2_month != 0 and cpk <= cpk_last_month <= cpk_last2_month:
+                            r2 = (1 - (cpk / cpk_last2_month)) * 100
+            rows.append({
+                'ChartKey': f"{group_name}@{chart_name}@{characteristics}",
+                'GroupName': group_name,
+                'ChartName': chart_name,
+                'Characteristics': characteristics,
+                'Cpk': cpk,
+                'Cpk_last_month': cpk_last_month,
+                'Cpk_last2_month': cpk_last2_month,
+                'Custom_Cpk': custom_cpk,
+                'R1(%)': r1,
+                'R2(%)': r2
+            })
+        df = pd.DataFrame(rows)
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "下載 Chart 資訊 Excel", "chart_info.xlsx", "Excel Files (*.xlsx)")
+        if path:
+            try:
+                df.to_excel(path, index=False)
+                QtWidgets.QMessageBox.information(self, "匯出成功", f"已匯出 Excel 到：{path}")
+            except Exception as e:
+                QtWidgets.QMessageBox.critical(self, "匯出失敗", f"匯出 Excel 失敗：{e}")
 
     # === 檔案載入 ===
     def load_csv(self):
@@ -823,5 +764,3 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         if path:
             self.figure.savefig(path)
             QtWidgets.QMessageBox.information(self, "匯出成功", f"已匯出圖片到：{path}")
-    # 新增：匯出所有 chart 詳細統計
-    # 使用方式：可在 UI 加一個按鈕呼叫 export_all_chart_details()
