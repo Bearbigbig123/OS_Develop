@@ -164,6 +164,36 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         title_lbl.setObjectName("sectionTitle")
         header.addWidget(title_lbl)
         header.addStretch(1)
+        
+        # 加上切換按鈕
+        self.prev_chart_btn = QtWidgets.QPushButton("◀ Prev")
+        self.prev_chart_btn.setMinimumHeight(32)
+        self.prev_chart_btn.setMinimumWidth(80)
+        self.prev_chart_btn.setStyleSheet("""
+            QPushButton {
+                background: #6b7280;
+                color: #fff;
+                border: none;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 500;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background: #4b5563;
+            }
+            QPushButton:pressed {
+                background: #374151;
+            }
+        """)
+        
+        self.next_chart_btn = QtWidgets.QPushButton("Next ▶")
+        self.next_chart_btn.setMinimumHeight(32)
+        self.next_chart_btn.setMinimumWidth(80)
+        self.next_chart_btn.setStyleSheet(self.prev_chart_btn.styleSheet())
+        
+        header.addWidget(self.prev_chart_btn)
+        header.addWidget(self.next_chart_btn)
         chart_layout.addLayout(header)
         self.figure = Figure(figsize=(8, 4))
         self.canvas = FigureCanvas(self.figure)
@@ -175,6 +205,8 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         self.start_date.dateChanged.connect(self.on_date_changed)
         self.end_date.dateChanged.connect(self.on_date_changed)
         self.export_excel_btn.clicked.connect(self.export_chart_info_excel)
+        self.prev_chart_btn.clicked.connect(self.prev_chart)
+        self.next_chart_btn.clicked.connect(self.next_chart)
         self.apply_theme()
     def export_chart_info_excel(self):
         # 匯出所有 chart 的 group_name@chart_name@characteristics 及 Cpk 指標到 Excel，並加上 debug log
@@ -325,7 +357,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                         x_min, x_max = 0.5, n + 0.5
                         for s, e, lab, col in windows:
                             s_clip = max(pd.Timestamp(s), pd.Timestamp(tmin))
-                            e_clip = min(pd.Timestamp(e), pd.Timestamp(tmax))
+                            e_clip = min(pd.Timestamp(e), pd.Timestamp(tmax))  # 右邊界只到資料最後一天
                             if e_clip <= s_clip:
                                 continue
                             xl = max(x_min, t2ix_left(s_clip))
@@ -1020,3 +1052,15 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         ax.grid(True, linestyle=':', linewidth=0.6, alpha=0.5)
         self.figure.tight_layout()
         self.canvas.draw()
+
+    def prev_chart(self):
+        """切換到上一張圖表"""
+        current_idx = self.chart_combo.currentIndex()
+        if current_idx > 1:  # 第0項是"請選擇Chart"
+            self.chart_combo.setCurrentIndex(current_idx - 1)
+    
+    def next_chart(self):
+        """切換到下一張圖表"""
+        current_idx = self.chart_combo.currentIndex()
+        if current_idx < self.chart_combo.count() - 1:
+            self.chart_combo.setCurrentIndex(current_idx + 1)
