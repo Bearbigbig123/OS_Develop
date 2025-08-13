@@ -1993,81 +1993,81 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
             for rule in ['WE1','WE2','WE3','WE4','WE5','WE6','WE7','WE8','WE9','WE10']:
                 if chart_info.get(rule, 'N') == 'Y':
                     rule_list.append(rule)
-            chart_info['rule_list'] = rule_list
-            group_name = str(chart_info.get('group_name', chart_info.get('GroupName', 'Unknown')))
-            chart_name = str(chart_info.get('chart_name', chart_info.get('ChartName', 'Unknown')))
-            print(f" - analyze_chart 開始處理 {group_name}/{chart_name}")
-            print(f" - analyze_chart: 接收到的 raw_df shape: {raw_df.shape}")
+        chart_info['rule_list'] = rule_list
+        group_name = str(chart_info.get('group_name', chart_info.get('GroupName', 'Unknown')))
+        chart_name = str(chart_info.get('chart_name', chart_info.get('ChartName', 'Unknown')))
+        print(f" - analyze_chart 開始處理 {group_name}/{chart_name}")
+        print(f" - analyze_chart: 接收到的 raw_df shape: {raw_df.shape}")
 
-            if 'point_time' not in raw_df.columns or not pd.api.types.is_datetime64_any_dtype(raw_df['point_time']):
-                 print(f" - analyze_chart: 'point_time' column missing or not datetime type for {group_name}/{chart_name}. Skipping analysis.")
-                 return None
-
-            latest_raw_data_time = raw_df['point_time'].max()
-
-            if execution_time is None or pd.isna(execution_time):
-                print(" - analyze_chart: execution_time is None or NaT, using latest data time as weekly end date.")
-                weekly_end_date = latest_raw_data_time
-            else:
-                print(f" - analyze_chart: execution_time is provided ({execution_time}), using it as weekly end date.")
-                weekly_end_date = execution_time
-
-            if pd.isna(weekly_end_date):
-                print(f" - analyze_chart: Unable to determine weekly end date (latest_raw_data_time is also invalid). Skipping analysis.")
+        if 'point_time' not in raw_df.columns or not pd.api.types.is_datetime64_any_dtype(raw_df['point_time']):
+                print(f" - analyze_chart: 'point_time' column missing or not datetime type for {group_name}/{chart_name}. Skipping analysis.")
                 return None
 
-            weekly_start_date = weekly_end_date - pd.Timedelta(days=6)
-            baseline_end_date = weekly_start_date - pd.Timedelta(seconds=1)
-            baseline_start_date = baseline_end_date - pd.Timedelta(days=365)
+        latest_raw_data_time = raw_df['point_time'].max()
 
-            print(f" - analyze_chart: 計算出的時間範圍 - Weekly: {weekly_start_date} to {weekly_end_date}, Baseline: {baseline_start_date} to {baseline_end_date}")
+        if execution_time is None or pd.isna(execution_time):
+            print(" - analyze_chart: execution_time is None or NaT, using latest data time as weekly end date.")
+            weekly_end_date = latest_raw_data_time
+        else:
+            print(f" - analyze_chart: execution_time is provided ({execution_time}), using it as weekly end date.")
+            weekly_end_date = execution_time
 
-            try:
-                print(f" - analyze_chart: 準備呼叫外部 process_single_chart for {group_name}/{chart_name} with raw_df shape {raw_df.shape}")
-                result = process_single_chart(chart_info.copy(), raw_df,baseline_start_date, baseline_end_date, weekly_start_date, weekly_end_date)
-                print(f" - analyze_chart: 外部 process_single_chart 呼叫完成 for {group_name}/{chart_name}")
+        if pd.isna(weekly_end_date):
+            print(f" - analyze_chart: Unable to determine weekly end date (latest_raw_data_time is also invalid). Skipping analysis.")
+            return None
 
-                if result is None or not isinstance(result, dict):
-                    print(f" - analyze_chart: 外部 process_single_chart 返回 None 或無效結果 for {group_name}/{chart_name}, 跳過後續處理.")
-                    return None
+        weekly_start_date = weekly_end_date - pd.Timedelta(days=6)
+        baseline_end_date = weekly_start_date - pd.Timedelta(seconds=1)
+        baseline_start_date = baseline_end_date - pd.Timedelta(days=365)
 
-                print(f" - analyze_chart: process_single_chart 返回結果 (部分): {list(result.keys())}")
+        print(f" - analyze_chart: 計算出的時間範圍 - Weekly: {weekly_start_date} to {weekly_end_date}, Baseline: {baseline_start_date} to {baseline_end_date}")
 
-                print(f" - analyze_chart: 準備呼叫 plot_spc_chart for {group_name}/{chart_name}")
-                image_path, violated_rules = plot_spc_chart(raw_df, chart_info, weekly_start_date, weekly_end_date)
-                print(f" - analyze_chart: plot_spc_chart 呼叫完成 for {group_name}/{chart_name}")
-                print(f" - analyze_chart: plot_spc_chart 返回 image_path: {image_path}")
-                print(f" - analyze_chart: plot_spc_chart 返回 Violated Rules: {violated_rules}")
+        try:
+            print(f" - analyze_chart: 準備呼叫外部 process_single_chart for {group_name}/{chart_name} with raw_df shape {raw_df.shape}")
+            result = process_single_chart(chart_info.copy(), raw_df,baseline_start_date, baseline_end_date, weekly_start_date, weekly_end_date)
+            print(f" - analyze_chart: 外部 process_single_chart 呼叫完成 for {group_name}/{chart_name}")
 
-                weekly_data = raw_df[(raw_df['point_time'] >= weekly_start_date) & (raw_df['point_time'] <= weekly_end_date)].copy()
-                print(f" - analyze_chart: 切出當周資料 weekly_data shape: {weekly_data.shape}")
+            if result is None or not isinstance(result, dict):
+                print(f" - analyze_chart: 外部 process_single_chart 返回 None 或無效結果 for {group_name}/{chart_name}, 跳過後續處理.")
+                return None
 
-                # Cpk 計算保留，雖然不在 Dashboard 顯示，但在 Excel 輸出中可能有需要
-                print(f" - analyze_chart: 準備呼叫 calculate_cpk for {group_name}/{chart_name}")
-                cpk_result = calculate_cpk(weekly_data, chart_info)
-                print(f" - analyze_chart: calculate_cpk 呼叫完成 for {group_name}/{chart_name}")
-                print(f" - analyze_chart: calculate_cpk 返回結果: {cpk_result}")
+            print(f" - analyze_chart: process_single_chart 返回結果 (部分): {list(result.keys())}")
 
-                if cpk_result and 'Cpk' in cpk_result:
-                    result['Cpk'] = cpk_result['Cpk']
-                else:
-                    result['Cpk'] = np.nan
+            print(f" - analyze_chart: 準備呼叫 plot_spc_chart for {group_name}/{chart_name}")
+            image_path, violated_rules = plot_spc_chart(raw_df, chart_info, weekly_start_date, weekly_end_date)
+            print(f" - analyze_chart: plot_spc_chart 呼叫完成 for {group_name}/{chart_name}")
+            print(f" - analyze_chart: plot_spc_chart 返回 image_path: {image_path}")
+            print(f" - analyze_chart: plot_spc_chart 返回 Violated Rules: {violated_rules}")
 
-                print(f" - analyze_chart: 準備呼叫 plot_weekly_spc_chart for {group_name}/{chart_name}")
-                weekly_image_path = plot_weekly_spc_chart(raw_df, chart_info, weekly_start_date, weekly_end_date)
-                print(f" - analyze_chart: plot_weekly_spc_chart 呼叫完成 for {group_name}/{chart_name}")
-                print(f" - analyze_chart: plot_weekly_spc_chart 返回 weekly_image_path: {weekly_image_path}")
+            weekly_data = raw_df[(raw_df['point_time'] >= weekly_start_date) & (raw_df['point_time'] <= weekly_end_date)].copy()
+            print(f" - analyze_chart: 切出當周資料 weekly_data shape: {weekly_data.shape}")
 
-                result['violated_rules'] = violated_rules if violated_rules is not None else {}
-                self.build_result(result, image_path, weekly_image_path)
+            # Cpk 計算保留，雖然不在 Dashboard 顯示，但在 Excel 輸出中可能有需要
+            print(f" - analyze_chart: 準備呼叫 calculate_cpk for {group_name}/{chart_name}")
+            cpk_result = calculate_cpk(weekly_data, chart_info)
+            print(f" - analyze_chart: calculate_cpk 呼叫完成 for {group_name}/{chart_name}")
+            print(f" - analyze_chart: calculate_cpk 返回結果: {cpk_result}")
 
-                print(f" - analyze_chart 處理完成並返回結果 for {group_name}/{chart_name}")
-                return result
+            if cpk_result and 'Cpk' in cpk_result:
+                result['Cpk'] = cpk_result['Cpk']
+            else:
+                result['Cpk'] = np.nan
 
-            except Exception as e:
-                 print(f"[Error] analyze_chart 處理圖表 {group_name}/{chart_name} 時發生錯誤: {str(e)}")
-                 traceback.print_exc()
-                 return None
+            print(f" - analyze_chart: 準備呼叫 plot_weekly_spc_chart for {group_name}/{chart_name}")
+            weekly_image_path = plot_weekly_spc_chart(raw_df, chart_info, weekly_start_date, weekly_end_date)
+            print(f" - analyze_chart: plot_weekly_spc_chart 呼叫完成 for {group_name}/{chart_name}")
+            print(f" - analyze_chart: plot_weekly_spc_chart 返回 weekly_image_path: {weekly_image_path}")
+
+            result['violated_rules'] = violated_rules if violated_rules is not None else {}
+            self.build_result(result, image_path, weekly_image_path)
+
+            print(f" - analyze_chart 處理完成並返回結果 for {group_name}/{chart_name}")
+            return result
+
+        except Exception as e:
+                print(f"[Error] analyze_chart 處理圖表 {group_name}/{chart_name} 時發生錯誤: {str(e)}")
+                traceback.print_exc()
+                return None
 
     def build_result(self, result, image_path, weekly_image_path):
         violated_rules = result.get('violated_rules', {})
