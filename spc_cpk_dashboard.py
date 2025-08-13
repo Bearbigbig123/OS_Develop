@@ -418,7 +418,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                 workbook = xlsxwriter.Workbook(path)
                 worksheet = workbook.add_worksheet()
                 # 設定欄寬（第一欄放圖片，設寬 36，其他 18）
-                worksheet.set_column(0, 0, 36)
+                worksheet.set_column(0, 0, 60)
                 for i in range(1, len(columns)):
                     worksheet.set_column(i, i, 18)
                 # 標題粗體
@@ -431,9 +431,11 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                 for row_idx, row in enumerate(df.to_dict('records')):
                     # 插入圖片
                     img_path = chart_images[row_idx]
-                    worksheet.set_row(row_idx+1, img_height * 1)
-                    worksheet.insert_image(row_idx+1, 0, img_path, {'x_scale': img_width/480, 'y_scale': img_height/240, 'object_position': 1})
+                    worksheet.set_row(row_idx+1, img_height * 1.35)
+                    worksheet.insert_image(row_idx+1, 0, img_path, {'x_scale': img_width/480, 'y_scale': img_height/240, 'object_position': 1,"y_offset": 10})
                     # 其他欄位
+
+                    
                     for col_idx, col_name in enumerate(columns[1:], 1):
                         val = row.get(col_name, '')
                         # 修正 NaN/Inf 問題
