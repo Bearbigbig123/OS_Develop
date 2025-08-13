@@ -69,7 +69,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         self.end_date = QtWidgets.QDateEdit(QtCore.QDate.currentDate())
         self.end_date.setCalendarPopup(True)
         # 只保留執行分析按鈕，並重新設計
-        self.recalc_btn = QtWidgets.QPushButton("執行分析")
+        self.recalc_btn = QtWidgets.QPushButton("Run Analysis")
         self.recalc_btn.setMinimumHeight(38)
         self.recalc_btn.setMinimumWidth(120)
         self.recalc_btn.setStyleSheet("""
@@ -90,7 +90,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
             }
         """)
         # 新增下載 Excel 按鈕
-        self.export_excel_btn = QtWidgets.QPushButton("下載 Chart 資訊 Excel")
+        self.export_excel_btn = QtWidgets.QPushButton("Download Cpk Detail")
         self.export_excel_btn.setMinimumHeight(38)
         self.export_excel_btn.setMinimumWidth(180)
         self.export_excel_btn.setStyleSheet(self.recalc_btn.styleSheet())
@@ -151,6 +151,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         create_metric_card("custom", "Long-Term Cpk", 3)
         create_metric_card("r1", "R1", 4)
         create_metric_card("r2", "R2", 5)
+        create_metric_card("kval", "K", 6)
         root.addLayout(cards_layout)
         # ===== Chart Area =====
         self.chart_frame = QtWidgets.QFrame()
@@ -260,6 +261,19 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                     print_mean_sigma(df_last2_month, '上上月', group_name, chart_name)
                     print_mean_sigma(df_all, '全部', group_name, chart_name)
             # --- 新增：用與 UI 完全一致的方式繪製圖表並存成圖片 ---
+            # 計算 K 參數
+            kval = None
+            try:
+                if target is not None and usl is not None and lsl is not None:
+                    mean_val = None
+                    plot_df = self.raw_charts_dict.get(key)
+                    if plot_df is not None and not plot_df.empty:
+                        mean_val = plot_df['point_val'].mean()
+                    rng = (usl - lsl) / 2 if (usl is not None and lsl is not None and (usl-lsl)!=0) else None
+                    if mean_val is not None and rng:
+                        kval = abs(mean_val - target) / rng
+            except Exception:
+                kval = None
             import tempfile
             tmp_img = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
             tmp_img.close()
@@ -393,6 +407,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                 'USL': usl,
                 'LSL': lsl,
                 'Target': target,
+                'K': kval,
                 'Cpk_Curr': cpk,
                 'Cpk_L1': cpk_last_month,
                 'Cpk_L2': cpk_last2_month,
@@ -400,11 +415,11 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                 'R1(%)': r1,
                 'R2(%)': r2,
                 'Mean_Curr': mean_month,
-                'Sigma_Curr': sigma_month,
-                'Mean_L1': mean_last_month,
-                'Sigma_L1': sigma_last_month,
-                'Mean_L2': mean_last2_month,
-                'Sigma_L2': sigma_last2_month,
+                'Sigma_CurrentMonth': sigma_month,
+                'Mean_LastMonth': mean_last_month,
+                'Sigma_LastMonth': sigma_last_month,
+                'Mean_Last2Month': mean_last2_month,
+                'Sigma_Last2Month': sigma_last2_month,
                 'Mean_All': mean_all,
                 'Sigma_All': sigma_all
             })
@@ -776,6 +791,27 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                 comp['value_label'].setText('-')
             else:
                 comp['value_label'].setText(f"{value:.1f}%" if is_percent else f"{value:.3f}")
+
+        # 計算 K 參數
+        kval = None
+        try:
+            usl = chart_info.get('USL', None)
+            lsl = chart_info.get('LSL', None)
+            target = None
+            for key_t in ['Target', 'TARGET', 'TargetValue', '中心線', 'Center']:
+                if key_t in chart_info and pd.notna(chart_info[key_t]):
+                    target = chart_info[key_t]
+                    break
+            mean_val = None
+            raw_df2 = self.raw_charts_dict.get((group_name, chart_name))
+            if raw_df2 is not None and not raw_df2.empty:
+                mean_val = raw_df2['point_val'].mean()
+            rng = (usl - lsl) / 2 if (usl is not None and lsl is not None and (usl-lsl)!=0) else None
+            if mean_val is not None and target is not None and rng:
+                kval = abs(mean_val - target) / rng
+        except Exception:
+            kval = None
+        set_card('kval', kval)
         set_card('cpk', cpk_res.get('Cpk'))
         set_card('l1', cpk_res.get('Cpk_last_month'))
         set_card('l2', cpk_res.get('Cpk_last2_month'))
