@@ -1051,9 +1051,22 @@ def process_single_chart(chart_info, raw_df, initial_baseline_start_date, baseli
         print(f"  初始一年基線數據點數量: {baseline_count_one_year}")
 
         # 步驟 2: 根據計數決定最終使用的基線開始日期
+        # === 新增：基線數據不足標記 ===
+        baseline_insufficient = False
+        
         if baseline_count_one_year < 10:
             # 如果少於 10 點，將基線期擴展到兩年
             actual_baseline_start_date = baseline_end_date - pd.Timedelta(days=365 * 2)
+            print(f"  基線數據點數量 ({baseline_count_one_year}) < 10，將基線期擴展至兩年: {actual_baseline_start_date} 至 {baseline_end_date}")
+            
+            # 檢查擴展後的數量
+            baseline_data_two_year = raw_df[(raw_df['point_time'] >= actual_baseline_start_date) & (raw_df['point_time'] <= baseline_end_date)].copy()
+            baseline_count_two_year = len(baseline_data_two_year)
+            print(f"  擴展至兩年後基線數據點數量: {baseline_count_two_year}")
+            
+            if baseline_count_two_year < 10:
+                print(f"  ⚠️  擴展至兩年後仍少於10點 ({baseline_count_two_year})，將跳過 OOB 分析但繼續處理其他功能")
+                baseline_insufficient = True
             print(f"  基線數據點數量 ({baseline_count_one_year}) < 10，將基線期擴展至兩年: {actual_baseline_start_date} 至 {baseline_end_date}")
         else:
             # 如果大於等於 10 點，使用一年的基線期
@@ -1171,6 +1184,7 @@ def process_single_chart(chart_info, raw_df, initial_baseline_start_date, baseli
             'LCL': chart_info.get('LCL', 'N/A'),
             'Target': chart_info.get('Target', 'N/A'),
             'Resolution': chart_info.get('Resolution', 'N/A'),
+            'baseline_insufficient': baseline_insufficient  # 新增標記，供後續使用
             # 可以考慮添加 actual_baseline_start_date 到結果中，用於記錄實際使用的基線範圍
             # 'Actual_Baseline_Start': actual_baseline_start_date
         }
@@ -2338,10 +2352,20 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
                 print(f" - analyze_chart (離散型): 初始一年基線數據點數量: {baseline_count_one_year}")
 
                 # 步驟 2: 根據計數決定最終使用的基線開始日期
+                baseline_insufficient_discrete = False
                 if baseline_count_one_year < 10:
                     # 如果少於 10 點，將基線期擴展到兩年
                     actual_baseline_start_date = baseline_end_date - pd.Timedelta(days=365 * 2)
                     print(f" - analyze_chart (離散型): 基線數據點數量 ({baseline_count_one_year}) < 10，將基線期擴展至兩年: {actual_baseline_start_date} 至 {baseline_end_date}")
+                    
+                    # 檢查擴展後的數量
+                    baseline_data_two_year = raw_df[(raw_df['point_time'] >= actual_baseline_start_date) & (raw_df['point_time'] <= baseline_end_date)].copy()
+                    baseline_count_two_year = len(baseline_data_two_year)
+                    print(f" - analyze_chart (離散型): 擴展至兩年後基線數據點數量: {baseline_count_two_year}")
+                    
+                    if baseline_count_two_year < 10:
+                        print(f" - analyze_chart (離散型): ⚠️  擴展至兩年後仍少於10點 ({baseline_count_two_year})，將跳過離散型 OOB 分析")
+                        baseline_insufficient_discrete = True
                 else:
                     # 如果大於等於 10 點，使用一年的基線期
                     actual_baseline_start_date = initial_baseline_start_date
@@ -2353,7 +2377,8 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
                 
                 weekly_data = raw_df[(raw_df['point_time'] >= weekly_start_date) & (raw_df['point_time'] <= weekly_end_date)].copy()
                 
-                if not baseline_data.empty and not weekly_data.empty:
+                if not baseline_data.empty and not weekly_data.empty and not baseline_insufficient_discrete:
+                    print(f" - analyze_chart (離散型): 基線數據充足，進行正常離散型 OOB 分析")
                     # 計算統計數據
                     def calculate_statistics(data):
                         if data.shape[0] <= 1:
@@ -2387,8 +2412,18 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
                     print(f" - analyze_chart: 離散型 OOB 處理完成 for {group_name}/{chart_name}")
                 else:
                     print(f" - analyze_chart: 離散型 OOB 分析數據不足 for {group_name}/{chart_name}")
-                    # 如果基線或週數據為空，仍標記為離散型，但保留連續型的結果
+                    # 基線數據不足或週數據為空時的處理
+                    if baseline_insufficient_discrete:
+                        print(f" - analyze_chart: 離散型基線數據不足，設置所有 OOB 項目為 NO_HIGHLIGHT")
+                        # 覆蓋連續型的 OOB 結果為 NO_HIGHLIGHT
+                        result['HL_P95_shift'] = 'NO_HIGHLIGHT'
+                        result['HL_P50_shift'] = 'NO_HIGHLIGHT'
+                        result['HL_P05_shift'] = 'NO_HIGHLIGHT'
+                        result['HL_sticking_shift'] = 'NO_HIGHLIGHT'
+                        result['HL_trending'] = 'NO_HIGHLIGHT'
+                        result['HL_high_OOC'] = 'NO_HIGHLIGHT'
                     result['data_type'] = 'discrete'
+                    result['baseline_insufficient'] = baseline_insufficient_discrete  # 標記離散型基線不足
             else:
                 # 連續型使用原本的 OOB 方法（已在 process_single_chart 中處理）
                 print(f" - analyze_chart: 使用連續型 OOB 分析 for {group_name}/{chart_name}")
