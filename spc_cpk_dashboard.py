@@ -176,7 +176,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         self.export_excel_btn.clicked.connect(self.export_chart_info_excel)
         self.apply_theme()
     def export_chart_info_excel(self):
-        # 匯出所有 chart 的 group_name@chart_name@characteristics 及 Cpk 指標到 Excel
+        # 匯出所有 chart 的 group_name@chart_name@characteristics 及 Cpk 指標到 Excel，並加上 debug log
         if self.all_charts_info is None:
             QtWidgets.QMessageBox.warning(self, "無資料", "尚未載入圖表資訊！")
             return
@@ -186,31 +186,48 @@ class SPCCpkDashboard(QtWidgets.QWidget):
             chart_name = str(chart_info.get('ChartName', ''))
             characteristics = str(chart_info.get('Characteristics', ''))
             key = (group_name, chart_name)
-            # 取得 Cpk 指標
             cpk = None
             cpk_last_month = None
             cpk_last2_month = None
             custom_cpk = None
             r1 = None
             r2 = None
-            # 目前日期範圍 Cpk
+            # 讓匯出時 end_date 也抓 chart 最新資料日期
+            export_end_date = self.end_date.date().toPyDate() if hasattr(self, 'end_date') else None
             if key in self.raw_charts_dict:
                 raw_df = self.raw_charts_dict[key]
-                if raw_df is not None and not raw_df.empty:
-                    # 目前 UI 結束日
-                    end_date = self.end_date.date().toPyDate() if hasattr(self, 'end_date') else None
-                    if end_date:
-                        cpk_res = self._recompute_cpk_for_chart(chart_info, end_date)
-                        cpk = cpk_res.get('Cpk')
-                        cpk_last_month = cpk_res.get('Cpk_last_month')
-                        cpk_last2_month = cpk_res.get('Cpk_last2_month')
-                        # 全部資料 Cpk
-                        custom_cpk = calculate_cpk(raw_df, chart_info)['Cpk']
-                        # r1, r2 計算
-                        if cpk is not None and cpk_last_month is not None and cpk_last_month != 0 and cpk <= cpk_last_month:
-                            r1 = (1 - (cpk / cpk_last_month)) * 100
-                        if cpk is not None and cpk_last_month is not None and cpk_last2_month is not None and cpk_last2_month != 0 and cpk <= cpk_last_month <= cpk_last2_month:
-                            r2 = (1 - (cpk / cpk_last2_month)) * 100
+                if raw_df is not None and not raw_df.empty and 'point_time' in raw_df.columns:
+                    raw_df_local = raw_df.copy()
+                    raw_df_local['point_time'] = pd.to_datetime(raw_df_local['point_time'])
+                    latest = raw_df_local['point_time'].max().date()
+                    export_end_date = latest
+                    start1 = pd.to_datetime(export_end_date) - pd.DateOffset(months=1)
+                    print(f"[DEBUG][Excel] {group_name}@{chart_name} Cpk區間: {start1.date()} ~ {export_end_date}")
+                if raw_df is not None:
+                    print(f"[DEBUG] raw_df shape: {raw_df.shape}")
+                else:
+                    print(f"[DEBUG] raw_df is None")
+                cpk_res = self._recompute_cpk_for_chart(chart_info, export_end_date)
+                print(f"[DEBUG] cpk_res: {cpk_res}")
+                cpk = cpk_res.get('Cpk')
+                cpk_last_month = cpk_res.get('Cpk_last_month')
+                cpk_last2_month = cpk_res.get('Cpk_last2_month')
+                if raw_df is not None:
+                    custom_cpk = calculate_cpk(raw_df, chart_info)['Cpk']
+                if cpk is not None and cpk_last_month is not None and cpk_last_month != 0 and cpk <= cpk_last_month:
+                    r1 = (1 - (cpk / cpk_last_month)) * 100
+                if cpk is not None and cpk_last_month is not None and cpk_last2_month is not None and cpk_last2_month != 0 and cpk <= cpk_last_month <= cpk_last2_month:
+                    r2 = (1 - (cpk / cpk_last2_month)) * 100
+                # 比較 UI 顯示的 Cpk 與匯出計算的 Cpk
+                idx = self.chart_combo.currentIndex() - 1
+                ui_cpk = None
+                if self.all_charts_info is not None and idx >= 0:
+                    ui_chart_info = self.all_charts_info.iloc[idx]
+                    ui_group_name = str(ui_chart_info['GroupName'])
+                    ui_chart_name = str(ui_chart_info['ChartName'])
+                    if group_name == ui_group_name and chart_name == ui_chart_name:
+                        ui_cpk = self.metric_cards['cpk']['value_label'].text()
+                        print(f"[COMPARE] {group_name}@{chart_name} UI_Cpk: {ui_cpk} | Export_Cpk: {cpk}")
             rows.append({
                 'ChartKey': f"{group_name}@{chart_name}@{characteristics}",
                 'GroupName': group_name,
@@ -539,10 +556,17 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         chart_name = str(chart_info['ChartName'])
         # 重新計算 Cpk 以目前 end_date 為基準
         end_d = self.end_date.date().toPyDate()
+        # 取得原始資料
+        raw_df = self.raw_charts_dict.get((group_name, chart_name))
+        if raw_df is not None and 'point_time' in raw_df.columns:
+            raw_df_local = raw_df.copy()
+            raw_df_local['point_time'] = pd.to_datetime(raw_df_local['point_time'])
+            latest = raw_df_local['point_time'].max()
+            start1 = pd.to_datetime(end_d) - pd.DateOffset(months=1)
+            print(f"[DEBUG][UI] {group_name}@{chart_name} Cpk區間: {start1.date()} ~ {end_d}")
         cpk_res = self._recompute_cpk_for_chart(chart_info, end_d)
         # 改為全部資料 Cpk
         all_data_cpk = None
-        raw_df = self.raw_charts_dict.get((group_name, chart_name))
         if raw_df is not None and not raw_df.empty:
             all_data_cpk = calculate_cpk(raw_df, chart_info)['Cpk']
         def set_card(key, value, is_percent=False):
