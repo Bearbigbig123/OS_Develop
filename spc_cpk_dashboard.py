@@ -181,10 +181,18 @@ class SPCCpkDashboard(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(self, "無資料", "尚未載入圖表資訊！")
             return
         rows = []
+        chart_images = []
         for _, chart_info in self.all_charts_info.iterrows():
             group_name = str(chart_info.get('GroupName', ''))
             chart_name = str(chart_info.get('ChartName', ''))
             characteristics = str(chart_info.get('Characteristics', ''))
+            usl = chart_info.get('USL', None)
+            lsl = chart_info.get('LSL', None)
+            target = None
+            for key_t in ['Target', 'TARGET', 'TargetValue', '中心線', 'Center']:
+                if key_t in chart_info and pd.notna(chart_info[key_t]):
+                    target = chart_info[key_t]
+                    break
             key = (group_name, chart_name)
             cpk = None
             cpk_last_month = None
@@ -192,6 +200,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
             custom_cpk = None
             r1 = None
             r2 = None
+            mean_month = sigma_month = mean_last_month = sigma_last_month = mean_last2_month = sigma_last2_month = mean_all = sigma_all = None
             # 讓匯出時 end_date 也抓 chart 最新資料日期
             export_end_date = self.end_date.date().toPyDate() if hasattr(self, 'end_date') else None
             if key in self.raw_charts_dict:
@@ -218,33 +227,122 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                     r1 = (1 - (cpk / cpk_last_month)) * 100
                 if cpk is not None and cpk_last_month is not None and cpk_last2_month is not None and cpk_last2_month != 0 and cpk <= cpk_last_month <= cpk_last2_month:
                     r2 = (1 - (cpk / cpk_last2_month)) * 100
-                # 比較 UI 顯示的 Cpk 與匯出計算的 Cpk
-                idx = self.chart_combo.currentIndex() - 1
-                ui_cpk = None
-                if self.all_charts_info is not None and idx >= 0:
-                    ui_chart_info = self.all_charts_info.iloc[idx]
-                    ui_group_name = str(ui_chart_info['GroupName'])
-                    ui_chart_name = str(ui_chart_info['ChartName'])
-                    if group_name == ui_group_name and chart_name == ui_chart_name:
-                        ui_cpk = self.metric_cards['cpk']['value_label'].text()
-                        print(f"[COMPARE] {group_name}@{chart_name} UI_Cpk: {ui_cpk} | Export_Cpk: {cpk}")
+                # 計算四個區間的 mean, sigma 並印出
+                def print_mean_sigma(df, label, group_name, chart_name):
+                    if df is not None and not df.empty:
+                        mean = df['point_val'].mean()
+                        sigma = df['point_val'].std()
+                        print(f"[MEAN_SIGMA][{group_name}@{chart_name}][{label}] mean: {mean:.4f}, sigma: {sigma:.4f}")
+                    else:
+                        print(f"[MEAN_SIGMA][{group_name}@{chart_name}][{label}] 無資料")
+                # 取得各區間資料
+                if raw_df is not None and not raw_df.empty and 'point_time' in raw_df.columns:
+                    raw_df_local = raw_df.copy()
+                    raw_df_local['point_time'] = pd.to_datetime(raw_df_local['point_time'])
+                    end_time = pd.to_datetime(export_end_date)
+                    start1 = end_time - pd.DateOffset(months=1)
+                    start2 = end_time - pd.DateOffset(months=2)
+                    start3 = end_time - pd.DateOffset(months=3)
+                    df_all = raw_df_local[raw_df_local['point_time'] <= end_time]
+                    df_month = raw_df_local[(raw_df_local['point_time'] > start1) & (raw_df_local['point_time'] <= end_time)]
+                    df_last_month = raw_df_local[(raw_df_local['point_time'] > start2) & (raw_df_local['point_time'] <= start1)]
+                    df_last2_month = raw_df_local[(raw_df_local['point_time'] > start3) & (raw_df_local['point_time'] <= start2)]
+                    mean_month = df_month['point_val'].mean() if not df_month.empty else None
+                    sigma_month = df_month['point_val'].std() if not df_month.empty else None
+                    mean_last_month = df_last_month['point_val'].mean() if not df_last_month.empty else None
+                    sigma_last_month = df_last_month['point_val'].std() if not df_last_month.empty else None
+                    mean_last2_month = df_last2_month['point_val'].mean() if not df_last2_month.empty else None
+                    sigma_last2_month = df_last2_month['point_val'].std() if not df_last2_month.empty else None
+                    mean_all = df_all['point_val'].mean() if not df_all.empty else None
+                    sigma_all = df_all['point_val'].std() if not df_all.empty else None
+                    print_mean_sigma(df_month, '當月', group_name, chart_name)
+                    print_mean_sigma(df_last_month, '上月', group_name, chart_name)
+                    print_mean_sigma(df_last2_month, '上上月', group_name, chart_name)
+                    print_mean_sigma(df_all, '全部', group_name, chart_name)
+            # --- 新增：將 UI 畫的圖表存成圖片，並記錄路徑 ---
+            import tempfile
+            import matplotlib.pyplot as plt
+            # 產生臨時圖片檔案
+            tmp_img = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            tmp_img.close()
+            # 使用 draw_spc_chart 畫圖（但不顯示）
+            fig = Figure(figsize=(8, 4))
+            ax = fig.add_subplot(111)
+            # 標題格式: [GroupName@ChartName@Characteristics]
+            characteristics = chart_info.get('Characteristics', '')
+            ax.set_title(f"{group_name}@{chart_name}@{characteristics}", pad=18)
+            ax.set_xlabel("")
+            ax.set_ylabel("值")
+            if key in self.raw_charts_dict:
+                plot_df = self.raw_charts_dict[key]
+                if plot_df is not None and not plot_df.empty:
+                    y = plot_df['point_val'].values
+                    x = range(1, len(y) + 1)
+                    ax.plot(x, y, linestyle='-', marker='o', color='#2563eb', markersize=5, linewidth=1.2)
+            fig.tight_layout()
+            fig.savefig(tmp_img.name)
+            chart_images.append(tmp_img.name)
             rows.append({
+                'ChartImage': '',  # 佔位，稍後插入圖片
                 'ChartKey': f"{group_name}@{chart_name}@{characteristics}",
                 'GroupName': group_name,
                 'ChartName': chart_name,
                 'Characteristics': characteristics,
+                'USL': usl,
+                'LSL': lsl,
+                'Target': target,
                 'Cpk': cpk,
                 'Cpk_last_month': cpk_last_month,
                 'Cpk_last2_month': cpk_last2_month,
                 'Custom_Cpk': custom_cpk,
                 'R1(%)': r1,
-                'R2(%)': r2
+                'R2(%)': r2,
+                'Mean_當月': mean_month,
+                'Sigma_當月': sigma_month,
+                'Mean_上月': mean_last_month,
+                'Sigma_上月': sigma_last_month,
+                'Mean_上上月': mean_last2_month,
+                'Sigma_上上月': sigma_last2_month,
+                'Mean_全部': mean_all,
+                'Sigma_全部': sigma_all
             })
         df = pd.DataFrame(rows)
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "下載 Chart 資訊 Excel", "chart_info.xlsx", "Excel Files (*.xlsx)")
         if path:
             try:
-                df.to_excel(path, index=False)
+                import xlsxwriter
+                # 欄位順序：圖片 + 其他欄位
+                columns = ['ChartImage'] + [c for c in df.columns if c != 'ChartImage']
+                workbook = xlsxwriter.Workbook(path)
+                worksheet = workbook.add_worksheet()
+                # 設定欄寬（第一欄放圖片，設寬 36，其他 18）
+                worksheet.set_column(0, 0, 36)
+                for i in range(1, len(columns)):
+                    worksheet.set_column(i, i, 18)
+                # 標題粗體
+                bold = workbook.add_format({'bold': True})
+                for col_idx, col_name in enumerate(columns):
+                    worksheet.write(0, col_idx, col_name, bold)
+                # 寫入資料 & 插入圖片
+                img_width = 240
+                img_height = 120
+                for row_idx, row in enumerate(df.to_dict('records')):
+                    # 插入圖片
+                    img_path = chart_images[row_idx]
+                    worksheet.set_row(row_idx+1, img_height * 0.75)
+                    worksheet.insert_image(row_idx+1, 0, img_path, {'x_scale': img_width/480, 'y_scale': img_height/240, 'object_position': 1})
+                    # 其他欄位
+                    for col_idx, col_name in enumerate(columns[1:], 1):
+                        val = row.get(col_name, '')
+                        # 修正 NaN/Inf 問題
+                        import math
+                        if val is None:
+                            val = ''
+                        elif isinstance(val, float):
+                            if math.isnan(val) or math.isinf(val):
+                                val = 'N/A'
+                        worksheet.write(row_idx+1, col_idx, val)
+                workbook.close()
                 QtWidgets.QMessageBox.information(self, "匯出成功", f"已匯出 Excel 到：{path}")
             except Exception as e:
                 QtWidgets.QMessageBox.critical(self, "匯出失敗", f"匯出 Excel 失敗：{e}")
@@ -788,3 +886,28 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         if path:
             self.figure.savefig(path)
             QtWidgets.QMessageBox.information(self, "匯出成功", f"已匯出圖片到：{path}")
+
+        # 計算四個區間的 mean, sigma 並印出
+        def print_mean_sigma(df, label, group_name, chart_name):
+            if df is not None and not df.empty:
+                mean = df['point_val'].mean()
+                sigma = df['point_val'].std()
+                print(f"[MEAN_SIGMA][{group_name}@{chart_name}][{label}] mean: {mean:.4f}, sigma: {sigma:.4f}")
+            else:
+                print(f"[MEAN_SIGMA][{group_name}@{chart_name}][{label}] 無資料")
+        # 取得各區間資料
+        if raw_df is not None and not raw_df.empty and 'point_time' in raw_df.columns:
+            raw_df_local = raw_df.copy()
+            raw_df_local['point_time'] = pd.to_datetime(raw_df_local['point_time'])
+            end_time = pd.to_datetime(export_end_date)
+            start1 = end_time - pd.DateOffset(months=1)
+            start2 = end_time - pd.DateOffset(months=2)
+            start3 = end_time - pd.DateOffset(months=3)
+            df_all = raw_df_local[raw_df_local['point_time'] <= end_time]
+            df_month = raw_df_local[(raw_df_local['point_time'] > start1) & (raw_df_local['point_time'] <= end_time)]
+            df_last_month = raw_df_local[(raw_df_local['point_time'] > start2) & (raw_df_local['point_time'] <= start1)]
+            df_last2_month = raw_df_local[(raw_df_local['point_time'] > start3) & (raw_df_local['point_time'] <= start2)]
+            print_mean_sigma(df_month, '當月', group_name, chart_name)
+            print_mean_sigma(df_last_month, '上月', group_name, chart_name)
+            print_mean_sigma(df_last2_month, '上上月', group_name, chart_name)
+            print_mean_sigma(df_all, '全部', group_name, chart_name)
