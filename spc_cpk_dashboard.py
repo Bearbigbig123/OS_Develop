@@ -259,26 +259,128 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                     print_mean_sigma(df_last_month, '上月', group_name, chart_name)
                     print_mean_sigma(df_last2_month, '上上月', group_name, chart_name)
                     print_mean_sigma(df_all, '全部', group_name, chart_name)
-            # --- 新增：將 UI 畫的圖表存成圖片，並記錄路徑 ---
+            # --- 新增：用與 UI 完全一致的方式繪製圖表並存成圖片 ---
             import tempfile
-            import matplotlib.pyplot as plt
-            # 產生臨時圖片檔案
             tmp_img = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
             tmp_img.close()
-            # 使用 draw_spc_chart 畫圖（但不顯示）
+            # 用 draw_spc_chart 的繪圖邏輯（x軸刻度與UI一致，點與點等距）
+            from matplotlib.figure import Figure
             fig = Figure(figsize=(8, 4))
             ax = fig.add_subplot(111)
-            # 標題格式: [GroupName@ChartName@Characteristics]
             characteristics = chart_info.get('Characteristics', '')
             ax.set_title(f"{group_name}@{chart_name}@{characteristics}", pad=18)
             ax.set_xlabel("")
             ax.set_ylabel("值")
-            if key in self.raw_charts_dict:
-                plot_df = self.raw_charts_dict[key]
-                if plot_df is not None and not plot_df.empty:
-                    y = plot_df['point_val'].values
-                    x = range(1, len(y) + 1)
-                    ax.plot(x, y, linestyle='-', marker='o', color='#2563eb', markersize=5, linewidth=1.2)
+            plot_df = self.raw_charts_dict.get(key)
+            if plot_df is None or plot_df.empty:
+                ax.text(0.5, 0.5, "無資料", ha='center', va='center', transform=ax.transAxes)
+            else:
+                plot_df2 = plot_df.copy()
+                # 日期過濾 (若有 point_time 欄位)
+                if 'point_time' in plot_df2.columns:
+                    try:
+                        plot_df2['point_time'] = pd.to_datetime(plot_df2['point_time'])
+                        plot_df2 = plot_df2.sort_values('point_time').reset_index(drop=True)
+                    except Exception:
+                        pass
+                y = plot_df2['point_val'].values
+                # x軸等距模式（與UI一致）
+                x = range(1, len(y) + 1)
+                # === 在圖上標示「當月/上月/上上月」區間 ===
+                if 'point_time' in plot_df2.columns and not plot_df2.empty:
+                    try:
+                        import matplotlib.transforms as mtransforms
+                        times = pd.to_datetime(plot_df2['point_time']).to_numpy()
+                        tmin, tmax = times.min(), times.max()
+                        end_sel = pd.Timestamp(tmax)
+                        start1 = end_sel - pd.DateOffset(months=1)
+                        start2 = end_sel - pd.DateOffset(months=2)
+                        start3 = end_sel - pd.DateOffset(months=3)
+                        windows = [
+                            (start1, end_sel,  'L0',   '#dbeafe'),
+                            (start2, start1,   'L1',   '#fef9c3'),
+                            (start3, start2,   'L2',   '#ede9fe'),
+                        ]
+                        text_trans = mtransforms.blended_transform_factory(ax.transData, ax.transAxes)
+                        import numpy as np
+                        n = len(times)
+                        def t2ix_left(t):
+                            return float(np.searchsorted(times, np.datetime64(t), side='left')) + 0.5
+                        def t2ix_right(t):
+                            return float(np.searchsorted(times, np.datetime64(t), side='right')) + 0.5
+                        x_min, x_max = 0.5, n + 0.5
+                        for s, e, lab, col in windows:
+                            s_clip = max(pd.Timestamp(s), pd.Timestamp(tmin))
+                            e_clip = min(pd.Timestamp(e), pd.Timestamp(tmax))
+                            if e_clip <= s_clip:
+                                continue
+                            xl = max(x_min, t2ix_left(s_clip))
+                            xr = min(x_max, t2ix_right(e_clip))
+                            if xr <= xl:
+                                continue
+                            ax.axvspan(xl, xr, color=col, alpha=0.25, zorder=0)
+                            x_center = (xl + xr) / 2.0
+                            ax.text(x_center, 1.04, lab, transform=text_trans, ha='center', va='top', fontsize=9, color='#374151', alpha=0.9)
+                    except Exception as _:
+                        pass
+                # 主數據線
+                ax.plot(x, y, linestyle='-', marker='o', color='#2563eb', markersize=5, linewidth=1.2, label='_nolegend_')
+                usl = chart_info.get('USL', None)
+                lsl = chart_info.get('LSL', None)
+                target = None
+                for key_t in ['Target', 'TARGET', 'TargetValue', '中心線', 'Center']:
+                    if key_t in chart_info and pd.notna(chart_info[key_t]):
+                        target = chart_info[key_t]
+                        break
+                import numpy as np
+                mean_val = float(np.mean(y)) if len(y) else None
+                # 超規點
+                if usl is not None:
+                    ax.scatter([xi for xi, yi in zip(x, y) if yi > usl], [yi for yi in y if yi > usl], color='#dc2626', s=36, zorder=5, label='_nolegend_')
+                if lsl is not None:
+                    ax.scatter([xi for xi, yi in zip(x, y) if yi < lsl], [yi for yi in y if yi < lsl], color='#dc2626', marker='s', s=36, zorder=5, label='_nolegend_')
+                # Y軸範圍（納入 USL/LSL/Target/Mean）
+                extra_vals = [v for v in [usl, lsl, target, mean_val]
+                              if v is not None and not (isinstance(v, float) and np.isnan(v))]
+                if len(y) > 0:
+                    ymin_sel = float(np.min(y))
+                    ymax_sel = float(np.max(y))
+                else:
+                    ymin_sel, ymax_sel = (0.0, 1.0)
+                if extra_vals:
+                    ymin_sel = min(ymin_sel, min(extra_vals))
+                    ymax_sel = max(ymax_sel, max(extra_vals))
+                rng = ymax_sel - ymin_sel
+                margin = 0.05 * rng if rng > 0 else 1.0
+                ax.set_ylim(ymin_sel - margin, ymax_sel + margin)
+                # 畫短水平線，文字貼右
+                from matplotlib import transforms as mtransforms
+                trans = mtransforms.blended_transform_factory(ax.transAxes, ax.transData)
+                def segment_with_label(val, name, color, va='center'):
+                    if val is None or (isinstance(val, float) and np.isnan(val)):
+                        return
+                    x0, x1 = 0.0, 0.965
+                    ax.plot([x0, x1], [val, val], transform=trans, color=color, linestyle='--', linewidth=1.1)
+                    ax.text(x1, val, name, transform=trans, color=color, va=va, ha='left', fontsize=9)
+                segment_with_label(usl, 'USL', '#ef4444', va='center')
+                segment_with_label(lsl, 'LSL', '#ef4444', va='center')
+                segment_with_label(target, 'Target', '#f59e0b', va='center')
+                segment_with_label(mean_val, 'Mean', '#16a34a', va='center')
+                # x軸刻度（等距模式顯示日期）
+                if 'point_time' in plot_df2.columns and not plot_df2.empty:
+                    times = plot_df2['point_time'].tolist()
+                    total = len(times)
+                    if total <= 12:
+                        tick_idx = list(range(1, total + 1))
+                    else:
+                        step = max(1, total // 8)
+                        tick_idx = list(range(1, total + 1, step))
+                        if tick_idx[-1] != total:
+                            tick_idx.append(total)
+                    labels = [times[i-1].strftime('%Y-%m-%d') for i in tick_idx]
+                    ax.set_xticks(tick_idx)
+                    ax.set_xticklabels(labels, rotation=90, ha='center', fontsize=8)
+                ax.grid(True, linestyle=':', linewidth=0.6, alpha=0.5)
             fig.tight_layout()
             fig.savefig(tmp_img.name)
             chart_images.append(tmp_img.name)
@@ -329,7 +431,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                 for row_idx, row in enumerate(df.to_dict('records')):
                     # 插入圖片
                     img_path = chart_images[row_idx]
-                    worksheet.set_row(row_idx+1, img_height * 0.75)
+                    worksheet.set_row(row_idx+1, img_height * 1)
                     worksheet.insert_image(row_idx+1, 0, img_path, {'x_scale': img_width/480, 'y_scale': img_height/240, 'object_position': 1})
                     # 其他欄位
                     for col_idx, col_name in enumerate(columns[1:], 1):
@@ -881,33 +983,3 @@ class SPCCpkDashboard(QtWidgets.QWidget):
         ax.grid(True, linestyle=':', linewidth=0.6, alpha=0.5)
         self.figure.tight_layout()
         self.canvas.draw()
-    def export_chart(self):
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "匯出圖片", "spc_chart.png", "PNG Files (*.png)")
-        if path:
-            self.figure.savefig(path)
-            QtWidgets.QMessageBox.information(self, "匯出成功", f"已匯出圖片到：{path}")
-
-        # 計算四個區間的 mean, sigma 並印出
-        def print_mean_sigma(df, label, group_name, chart_name):
-            if df is not None and not df.empty:
-                mean = df['point_val'].mean()
-                sigma = df['point_val'].std()
-                print(f"[MEAN_SIGMA][{group_name}@{chart_name}][{label}] mean: {mean:.4f}, sigma: {sigma:.4f}")
-            else:
-                print(f"[MEAN_SIGMA][{group_name}@{chart_name}][{label}] 無資料")
-        # 取得各區間資料
-        if raw_df is not None and not raw_df.empty and 'point_time' in raw_df.columns:
-            raw_df_local = raw_df.copy()
-            raw_df_local['point_time'] = pd.to_datetime(raw_df_local['point_time'])
-            end_time = pd.to_datetime(export_end_date)
-            start1 = end_time - pd.DateOffset(months=1)
-            start2 = end_time - pd.DateOffset(months=2)
-            start3 = end_time - pd.DateOffset(months=3)
-            df_all = raw_df_local[raw_df_local['point_time'] <= end_time]
-            df_month = raw_df_local[(raw_df_local['point_time'] > start1) & (raw_df_local['point_time'] <= end_time)]
-            df_last_month = raw_df_local[(raw_df_local['point_time'] > start2) & (raw_df_local['point_time'] <= start1)]
-            df_last2_month = raw_df_local[(raw_df_local['point_time'] > start3) & (raw_df_local['point_time'] <= start2)]
-            print_mean_sigma(df_month, '當月', group_name, chart_name)
-            print_mean_sigma(df_last_month, '上月', group_name, chart_name)
-            print_mean_sigma(df_last2_month, '上上月', group_name, chart_name)
-            print_mean_sigma(df_all, '全部', group_name, chart_name)
