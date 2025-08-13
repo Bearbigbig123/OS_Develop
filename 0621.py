@@ -2300,9 +2300,10 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
 
         weekly_start_date = weekly_end_date - pd.Timedelta(days=6)
         baseline_end_date = weekly_start_date - pd.Timedelta(seconds=1)
-        baseline_start_date = baseline_end_date - pd.Timedelta(days=365)
+        # 這裡使用初始的一年基線範圍
+        initial_baseline_start_date = baseline_end_date - pd.Timedelta(days=365)
 
-        print(f" - analyze_chart: 計算出的時間範圍 - Weekly: {weekly_start_date} to {weekly_end_date}, Baseline: {baseline_start_date} to {baseline_end_date}")
+        print(f" - analyze_chart: 計算出的時間範圍 - Weekly: {weekly_start_date} to {weekly_end_date}, Initial Baseline: {initial_baseline_start_date} to {baseline_end_date}")
 
         try:
             # === 新增：數據類型判斷 ===
@@ -2318,22 +2319,39 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
             # === 數據類型判斷結束 ===
 
             print(f" - analyze_chart: 準備呼叫外部 process_single_chart for {group_name}/{chart_name} with raw_df shape {raw_df.shape}")
-            result = process_single_chart(chart_info.copy(), raw_df,baseline_start_date, baseline_end_date, weekly_start_date, weekly_end_date)
+            # 統一傳入初始的一年基線範圍，讓 process_single_chart 內部決定實際使用的範圍
+            result = process_single_chart(chart_info.copy(), raw_df, initial_baseline_start_date, baseline_end_date, weekly_start_date, weekly_end_date)
             print(f" - analyze_chart: 外部 process_single_chart 呼叫完成 for {group_name}/{chart_name}")
 
             if result is None or not isinstance(result, dict):
                 print(f" - analyze_chart: 外部 process_single_chart 返回 None 或無效結果 for {group_name}/{chart_name}, 跳過後續處理.")
                 return None
 
-            # === 新增：根據數據類型進行不同的 OOB 處理 ===
+            # === 修改：統一使用相同的基線範圍選擇邏輯 ===
             if chart_info.get('data_type') == 'discrete':
                 print(f" - analyze_chart: 執行離散型 OOB 分析 for {group_name}/{chart_name}")
                 
-                # 準備數據 
+                # === 使用與連續型相同的基線範圍選擇邏輯 ===
+                # 步驟 1: 使用初始的一年基線範圍過濾數據並計數
+                baseline_data_one_year = raw_df[(raw_df['point_time'] >= initial_baseline_start_date) & (raw_df['point_time'] <= baseline_end_date)].copy()
+                baseline_count_one_year = len(baseline_data_one_year)
+                print(f" - analyze_chart (離散型): 初始一年基線數據點數量: {baseline_count_one_year}")
+
+                # 步驟 2: 根據計數決定最終使用的基線開始日期
+                if baseline_count_one_year < 10:
+                    # 如果少於 10 點，將基線期擴展到兩年
+                    actual_baseline_start_date = baseline_end_date - pd.Timedelta(days=365 * 2)
+                    print(f" - analyze_chart (離散型): 基線數據點數量 ({baseline_count_one_year}) < 10，將基線期擴展至兩年: {actual_baseline_start_date} 至 {baseline_end_date}")
+                else:
+                    # 如果大於等於 10 點，使用一年的基線期
+                    actual_baseline_start_date = initial_baseline_start_date
+                    print(f" - analyze_chart (離散型): 基線數據點數量 ({baseline_count_one_year}) >= 10，使用一年基線期: {actual_baseline_start_date} 至 {baseline_end_date}")
+
+                # 步驟 3: 使用最終確定的基線範圍過濾數據
+                baseline_data = raw_df[(raw_df['point_time'] >= actual_baseline_start_date) & (raw_df['point_time'] <= baseline_end_date)].copy()
+                print(f" - analyze_chart (離散型): 篩選後 baseline_data shape (使用 {len(baseline_data)} 點從 {actual_baseline_start_date} 至 {baseline_end_date}): {baseline_data.shape}")
+                
                 weekly_data = raw_df[(raw_df['point_time'] >= weekly_start_date) & (raw_df['point_time'] <= weekly_end_date)].copy()
-                baseline_end_date_for_discrete = weekly_start_date - pd.Timedelta(seconds=1)
-                baseline_start_date_for_discrete = baseline_end_date_for_discrete - pd.Timedelta(days=365)
-                baseline_data = raw_df[(raw_df['point_time'] >= baseline_start_date_for_discrete) & (raw_df['point_time'] <= baseline_end_date_for_discrete)].copy()
                 
                 if not baseline_data.empty and not weekly_data.empty:
                     # 計算統計數據
@@ -2354,6 +2372,9 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
                     base_data_dict = calculate_statistics(baseline_data)
                     weekly_data_dict = calculate_statistics(weekly_data)
                     
+                    print(f" - analyze_chart (離散型): 基線數據統計 - cnt={base_data_dict['cnt']}, mean={base_data_dict['mean']}, sigma={base_data_dict['sigma']}")
+                    print(f" - analyze_chart (離散型): 週數據統計 - cnt={weekly_data_dict['cnt']}, mean={weekly_data_dict['mean']}, sigma={weekly_data_dict['sigma']}")
+                    
                     # 呼叫離散型 OOB 計算
                     discrete_oob_result = discrete_oob_calculator(base_data_dict, weekly_data_dict, chart_info)
                     
@@ -2366,12 +2387,13 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
                     print(f" - analyze_chart: 離散型 OOB 處理完成 for {group_name}/{chart_name}")
                 else:
                     print(f" - analyze_chart: 離散型 OOB 分析數據不足 for {group_name}/{chart_name}")
+                    # 如果基線或週數據為空，仍標記為離散型，但保留連續型的結果
                     result['data_type'] = 'discrete'
             else:
                 # 連續型使用原本的 OOB 方法（已在 process_single_chart 中處理）
                 print(f" - analyze_chart: 使用連續型 OOB 分析 for {group_name}/{chart_name}")
                 result['data_type'] = 'continuous'
-            # === 不同數據類型 OOB 處理結束 ===
+            # === 統一基線範圍處理結束 ===
 
             print(f" - analyze_chart: process_single_chart 返回結果 (部分): {list(result.keys())}")
 
