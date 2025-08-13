@@ -393,20 +393,20 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                 'USL': usl,
                 'LSL': lsl,
                 'Target': target,
-                'Cpk': cpk,
-                'Cpk_last_month': cpk_last_month,
-                'Cpk_last2_month': cpk_last2_month,
+                'Cpk_Curr': cpk,
+                'Cpk_L1': cpk_last_month,
+                'Cpk_L2': cpk_last2_month,
                 'Custom_Cpk': custom_cpk,
                 'R1(%)': r1,
                 'R2(%)': r2,
-                'Mean_當月': mean_month,
-                'Sigma_當月': sigma_month,
-                'Mean_上月': mean_last_month,
-                'Sigma_上月': sigma_last_month,
-                'Mean_上上月': mean_last2_month,
-                'Sigma_上上月': sigma_last2_month,
-                'Mean_全部': mean_all,
-                'Sigma_全部': sigma_all
+                'Mean_Curr': mean_month,
+                'Sigma_Curr': sigma_month,
+                'Mean_L1': mean_last_month,
+                'Sigma_L1': sigma_last_month,
+                'Mean_L2': mean_last2_month,
+                'Sigma_L2': sigma_last2_month,
+                'Mean_All': mean_all,
+                'Sigma_All': sigma_all
             })
         df = pd.DataFrame(rows)
         path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "下載 Chart 資訊 Excel", "chart_info.xlsx", "Excel Files (*.xlsx)")
@@ -422,7 +422,8 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                 for i in range(1, len(columns)):
                     worksheet.set_column(i, i, 18)
                 # 標題粗體
-                bold = workbook.add_format({'bold': True})
+                bold = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter'})
+                cell_format = workbook.add_format({'align': 'center', 'valign': 'vcenter'})
                 for col_idx, col_name in enumerate(columns):
                     worksheet.write(0, col_idx, col_name, bold)
                 # 寫入資料 & 插入圖片
@@ -433,9 +434,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                     img_path = chart_images[row_idx]
                     worksheet.set_row(row_idx+1, img_height * 1.35)
                     worksheet.insert_image(row_idx+1, 0, img_path, {'x_scale': img_width/480, 'y_scale': img_height/240, 'object_position': 1,"y_offset": 10})
-                    # 其他欄位
-
-                    
+                    # 其他欄位（置中）
                     for col_idx, col_name in enumerate(columns[1:], 1):
                         val = row.get(col_name, '')
                         # 修正 NaN/Inf 問題
@@ -445,7 +444,7 @@ class SPCCpkDashboard(QtWidgets.QWidget):
                         elif isinstance(val, float):
                             if math.isnan(val) or math.isinf(val):
                                 val = 'N/A'
-                        worksheet.write(row_idx+1, col_idx, val)
+                        worksheet.write(row_idx+1, col_idx, val, cell_format)
                 workbook.close()
                 QtWidgets.QMessageBox.information(self, "匯出成功", f"已匯出 Excel 到：{path}")
             except Exception as e:
