@@ -603,6 +603,51 @@ def kshift_sigma_ratio_calculator(base, data, characteristic, resolution, ucl, l
 
     return pd.Series(results)
 
+# 數據類型判斷
+def determine_data_type(data_values):
+    """
+    判斷數據是離散型還是連續型
+    
+    判斷標準：
+    1. (unique數值種類/總樣本數N < 1/3 且 unique數值種類 < 5) OR
+    2. (總樣本數N >= 30 且 unique數值種類 <= 10)
+    滿足以上任一條件即認定為離散型
+    
+    Parameters:
+    - data_values: 數據值的 numpy array 或 pandas Series
+    
+    Returns:
+    - 'discrete' 或 'continuous'
+    """
+    import numpy as np
+    
+    # 移除 NaN 值
+    clean_values = data_values.dropna() if hasattr(data_values, 'dropna') else data_values[~np.isnan(data_values)]
+    
+    if len(clean_values) == 0:
+        return 'continuous'  # 預設為連續型
+    
+    unique_values = np.unique(clean_values)
+    unique_count = len(unique_values)
+    total_count = len(clean_values)
+    unique_ratio = unique_count / total_count
+    
+    print(f"  數據類型判斷: 唯一值數量={unique_count}, 總數量={total_count}, 比例={unique_ratio:.3f}")
+    
+    # 判斷邏輯：
+    # 條件1: unique數值種類/總樣本數N < 1/3 且 unique數值種類 < 5
+    condition1 = (unique_ratio <= 1/3) and (unique_count <= 5)
+    
+    # 條件2: 總樣本數N >= 30 且 unique數值種類 <= 10
+    condition2 = (total_count >= 30) and (unique_count <= 10)
+    
+    if condition1 or condition2:
+        print(f"    判定為離散型 - 條件1滿足: {condition1}, 條件2滿足: {condition2}")
+        return 'discrete'
+    else:
+        print(f"    判定為連續型 - 條件1滿足: {condition1}, 條件2滿足: {condition2}")
+        return 'continuous'
+
 # OOC計算
 def ooc_calculator(data, ucl, lcl):
     data_cnt = len(data)
@@ -738,6 +783,243 @@ def trending(raw_df, weekly_start_date, weekly_end_date, baseline_start_date, ba
     elif is_trending_down(check_medians) and check_medians[0] < p05:
         return 'HIGHLIGHT'
     return 'NO_HIGHLIGHT'
+
+# 離散型 OOB 處理函數
+def discrete_oob_calculator(base_data, weekly_data, chart_info, confidence_level=0.95):
+    """
+    離散型數據的 OOB 計算方法
+    包含修改後的 k-shift 和新增的 category_LT_Shift
+    
+    Parameters:
+    - base_data: 基線數據字典 (包含 'values', 'cnt', 'mean', 'sigma')
+    - weekly_data: 週數據字典 (包含 'values', 'cnt', 'mean', 'sigma')
+    - chart_info: 圖表信息
+    - confidence_level: 信心水準
+    
+    Returns:
+    - dict: 包含 OOB 結果的字典
+    """
+    import numpy as np
+    from scipy import stats
+    
+    print(f"  離散型 OOB 計算: 基線數據點數={base_data['cnt']}, 週數據點數={weekly_data['cnt']}")
+    
+    results = {
+        'HL_P95_shift': 'NO_HIGHLIGHT',
+        'HL_P50_shift': 'NO_HIGHLIGHT', 
+        'HL_P05_shift': 'NO_HIGHLIGHT',
+        'HL_sticking_shift': 'NO_HIGHLIGHT',
+        'HL_trending': 'NO_HIGHLIGHT',
+        'HL_high_OOC': 'NO_HIGHLIGHT',
+        'HL_category_LT_shift': 'NO_HIGHLIGHT',  # 新增的離散型專用項目
+        'discrete_method': True
+    }
+    
+    try:
+        # 1. 使用與連續型相同的 sticking_rate_calculator
+        print("  離散型 OOB: 計算 sticking rate...")
+        sticking_rate_results = sticking_rate_calculator(
+            pd.Series(base_data['values']), 
+            pd.Series(weekly_data['values'])
+        )
+        results['HL_sticking_shift'] = sticking_rate_results.get('highlight_status', 'NO_HIGHLIGHT')
+        
+        # 2. 使用與連續型相同的 trending (暫時設為不高亮，因為需要完整的 raw_df)
+        results['HL_trending'] = 'NO_HIGHLIGHT'  # 可能需要額外處理
+        
+        # 3. 使用與連續型相同的 high_OOC 檢查
+        print("  離散型 OOB: 計算 OOC...")
+        weekly_df = pd.DataFrame({'point_val': weekly_data['values']})
+        ooc_results = ooc_calculator(weekly_df, chart_info.get('UCL'), chart_info.get('LCL'))
+        ooc_highlight = review_ooc_results(ooc_results[1], ooc_results[2])
+        results['HL_high_OOC'] = ooc_highlight
+        
+        # 4. 修改後的 k-shift 計算（加入 capping rule）
+        print("  離散型 OOB: 計算修改後的 K-shift...")
+        kshift_results = discrete_kshift_calculator(
+            base_data, weekly_data, 
+            chart_info.get('Characteristics'), 
+            chart_info.get('Resolution'), 
+            chart_info.get('UCL'), 
+            chart_info.get('LCL')
+        )
+        results['HL_P95_shift'] = kshift_results.get('P95_shift', 'NO_HIGHLIGHT')
+        results['HL_P50_shift'] = kshift_results.get('P50_shift', 'NO_HIGHLIGHT')
+        results['HL_P05_shift'] = kshift_results.get('P05_shift', 'NO_HIGHLIGHT')
+        
+        # 5. 新增的 category_LT_Shift 計算
+        print("  離散型 OOB: 計算 category_LT_Shift...")
+        category_lt_results = category_lt_shift_calculator(base_data, weekly_data)
+        results['HL_category_LT_shift'] = category_lt_results.get('highlight_status', 'NO_HIGHLIGHT')
+        
+        print(f"  離散型 OOB 計算完成: {results}")
+        
+    except Exception as e:
+        print(f"  離散型 OOB 計算錯誤: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    return results
+
+# 修改後的 K-shift 函數（加入 capping rule）
+def discrete_kshift_calculator(base_data, weekly_data, characteristic, resolution, ucl, lcl):
+    """
+    離散型數據的 K-shift 計算，加入 capping rule
+    
+    Capping rule: 如果當周點數<=10 且 當周P95/P50/P05沒有超過 baseline的P05和P95範圍外，就不HL
+    """
+    import numpy as np
+    
+    print("  discrete_kshift: 開始計算離散型 K-shift")
+    
+    # 先使用原本的 kshift_sigma_ratio_calculator 獲取結果
+    kshift_results = kshift_sigma_ratio_calculator(
+        base_data, weekly_data, characteristic, resolution, ucl, lcl
+    )
+    
+    weekly_cnt = weekly_data['cnt']
+    print(f"  discrete_kshift: 當周點數 = {weekly_cnt}")
+    
+    # 應用 capping rule
+    if weekly_cnt <= 10:
+        print("  discrete_kshift: 當周點數 <= 10，檢查 capping rule")
+        
+        try:
+            # 計算當周和基線的百分位數
+            weekly_percentiles = get_percentiles(weekly_data['values'])
+            base_percentiles = get_percentiles(base_data['values'])
+            
+            weekly_p95 = weekly_percentiles.get('P95')
+            weekly_p50 = weekly_percentiles.get('P50') 
+            weekly_p05 = weekly_percentiles.get('P05')
+            base_p95 = base_percentiles.get('P95')
+            base_p05 = base_percentiles.get('P05')
+            
+            print(f"  discrete_kshift: 當周百分位數 - P95:{weekly_p95}, P50:{weekly_p50}, P05:{weekly_p05}")
+            print(f"  discrete_kshift: 基線範圍 - P05:{base_p05}, P95:{base_p95}")
+            
+            # 檢查當周百分位數是否都在基線 P05-P95 範圍內
+            if (not pd.isna(weekly_p95) and not pd.isna(base_p05) and not pd.isna(base_p95) and
+                not pd.isna(weekly_p50) and not pd.isna(weekly_p05)):
+                
+                p95_in_range = base_p05 <= weekly_p95 <= base_p95
+                p50_in_range = base_p05 <= weekly_p50 <= base_p95  
+                p05_in_range = base_p05 <= weekly_p05 <= base_p95
+                
+                print(f"  discrete_kshift: 範圍檢查 - P95 in range:{p95_in_range}, P50 in range:{p50_in_range}, P05 in range:{p05_in_range}")
+                
+                if p95_in_range and p50_in_range and p05_in_range:
+                    print("  discrete_kshift: Capping rule 觸發 - 所有百分位數都在基線範圍內，設為 NO_HIGHLIGHT")
+                    kshift_results['P95_shift'] = 'NO_HIGHLIGHT'
+                    kshift_results['P50_shift'] = 'NO_HIGHLIGHT' 
+                    kshift_results['P05_shift'] = 'NO_HIGHLIGHT'
+                else:
+                    print("  discrete_kshift: 有百分位數超出基線範圍，維持原始 K-shift 結果")
+            else:
+                print("  discrete_kshift: 百分位數計算有 NaN 值，維持原始 K-shift 結果")
+                
+        except Exception as e:
+            print(f"  discrete_kshift: Capping rule 檢查時發生錯誤: {e}")
+            # 發生錯誤時維持原始結果
+    else:
+        print("  discrete_kshift: 當周點數 > 10，不適用 capping rule")
+    
+    print(f"  discrete_kshift: 最終結果 - P95:{kshift_results.get('P95_shift')}, P50:{kshift_results.get('P50_shift')}, P05:{kshift_results.get('P05_shift')}")
+    
+    return kshift_results
+
+# 新的 category_LT_Shift 函數
+def category_lt_shift_calculator(base_data, weekly_data, threshold=0.7):
+    """
+    計算 category_LT_Shift
+    
+    邏輯：
+    1. 當周<20則rolling to 20筆
+    2. 拿當周data範圍去對應baseline同樣data範圍
+    3. 檢查data所佔比例是否超過70%
+    
+    Parameters:
+    - base_data: 基線數據字典
+    - weekly_data: 週數據字典  
+    - threshold: 佔比差異閾值，預設0.7 (70%)
+    
+    Returns:
+    - dict: 包含highlight_status的結果字典
+    """
+    import numpy as np
+    import pandas as pd
+    
+    print("  category_LT_shift: 開始計算")
+    
+    result = {
+        'highlight_status': 'NO_HIGHLIGHT',
+        'weekly_range': None,
+        'baseline_ratio_in_range': None,
+        'weekly_ratio_in_range': None, 
+        'ratio_diff': None
+    }
+    
+    try:
+        weekly_values = weekly_data['values'].copy()
+        base_values = base_data['values'].copy()
+        
+        print(f"  category_LT_shift: 原始當周點數 = {len(weekly_values)}")
+        
+        # 1. 如果當周 < 20 則 rolling to 20筆
+        if len(weekly_values) < 20:
+            print(f"  category_LT_shift: 當周點數 < 20，rolling 到 20 筆")
+            
+            # 需要從基線數據中補充
+            needed_points = 20 - len(weekly_values)
+            if len(base_values) >= needed_points:
+                # 取基線最後的點來補充
+                additional_points = base_values[-needed_points:]
+                weekly_values = np.concatenate([additional_points, weekly_values])
+                print(f"  category_LT_shift: 補充後當周點數 = {len(weekly_values)}")
+            else:
+                print(f"  category_LT_shift: 基線數據不足以補充到20筆，使用現有數據")
+                weekly_values = np.concatenate([base_values, weekly_values])
+        
+        # 2. 計算當周數據範圍
+        weekly_min = np.min(weekly_values)
+        weekly_max = np.max(weekly_values)
+        result['weekly_range'] = (weekly_min, weekly_max)
+        
+        print(f"  category_LT_shift: 當周數據範圍 = [{weekly_min:.3f}, {weekly_max:.3f}]")
+        
+        # 3. 計算基線數據在此範圍內的比例
+        baseline_in_range = base_values[(base_values >= weekly_min) & (base_values <= weekly_max)]
+        baseline_ratio = len(baseline_in_range) / len(base_values) if len(base_values) > 0 else 0
+        result['baseline_ratio_in_range'] = baseline_ratio
+        
+        # 4. 計算當周數據在此範圍內的比例（應該是100%，因為就是用當周數據定義的範圍）
+        weekly_in_range = weekly_values[(weekly_values >= weekly_min) & (weekly_values <= weekly_max)]  
+        weekly_ratio = len(weekly_in_range) / len(weekly_values) if len(weekly_values) > 0 else 0
+        result['weekly_ratio_in_range'] = weekly_ratio
+        
+        # 5. 計算比例差異
+        ratio_diff = abs(weekly_ratio - baseline_ratio)
+        result['ratio_diff'] = ratio_diff
+        
+        print(f"  category_LT_shift: 基線在範圍內比例 = {baseline_ratio:.3f}")
+        print(f"  category_LT_shift: 當周在範圍內比例 = {weekly_ratio:.3f}")
+        print(f"  category_LT_shift: 比例差異 = {ratio_diff:.3f}")
+        
+        # 6. 判斷是否需要高亮
+        if ratio_diff > threshold:
+            result['highlight_status'] = 'HIGHLIGHT'
+            print(f"  category_LT_shift: 比例差異 {ratio_diff:.3f} > {threshold}，需要 HIGHLIGHT")
+        else:
+            result['highlight_status'] = 'NO_HIGHLIGHT' 
+            print(f"  category_LT_shift: 比例差異 {ratio_diff:.3f} <= {threshold}，NO_HIGHLIGHT")
+            
+    except Exception as e:
+        print(f"  category_LT_shift: 計算時發生錯誤: {e}")
+        import traceback
+        traceback.print_exc()
+        result['highlight_status'] = 'NO_HIGHLIGHT'
+    
+    return result
 
 
 def process_single_chart(chart_info, raw_df, initial_baseline_start_date, baseline_end_date, weekly_start_date, weekly_end_date):
@@ -1186,7 +1468,7 @@ def resource_path(relative_path):
 
 # 常數定義
 HEADERS = ["Total Chart", "Weekly Chart", "Chart Info."]
-OOB_KEYS = ['HL_P95_shift', 'HL_P50_shift', 'HL_P05_shift', 'HL_sticking_shift', 'HL_trending', 'HL_high_OOC']
+OOB_KEYS = ['HL_P95_shift', 'HL_P50_shift', 'HL_P05_shift', 'HL_sticking_shift', 'HL_trending', 'HL_high_OOC', 'HL_category_LT_shift']
 
 
 class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
@@ -2023,6 +2305,18 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
         print(f" - analyze_chart: 計算出的時間範圍 - Weekly: {weekly_start_date} to {weekly_end_date}, Baseline: {baseline_start_date} to {baseline_end_date}")
 
         try:
+            # === 新增：數據類型判斷 ===
+            weekly_data_for_type_check = raw_df[(raw_df['point_time'] >= weekly_start_date) & (raw_df['point_time'] <= weekly_end_date)].copy()
+            
+            if not weekly_data_for_type_check.empty:
+                data_type = determine_data_type(weekly_data_for_type_check['point_val'])
+                print(f" - analyze_chart: 數據類型判斷結果: {data_type}")
+                chart_info['data_type'] = data_type
+            else:
+                print(f" - analyze_chart: 週數據為空，預設為連續型")
+                chart_info['data_type'] = 'continuous'
+            # === 數據類型判斷結束 ===
+
             print(f" - analyze_chart: 準備呼叫外部 process_single_chart for {group_name}/{chart_name} with raw_df shape {raw_df.shape}")
             result = process_single_chart(chart_info.copy(), raw_df,baseline_start_date, baseline_end_date, weekly_start_date, weekly_end_date)
             print(f" - analyze_chart: 外部 process_single_chart 呼叫完成 for {group_name}/{chart_name}")
@@ -2030,6 +2324,54 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
             if result is None or not isinstance(result, dict):
                 print(f" - analyze_chart: 外部 process_single_chart 返回 None 或無效結果 for {group_name}/{chart_name}, 跳過後續處理.")
                 return None
+
+            # === 新增：根據數據類型進行不同的 OOB 處理 ===
+            if chart_info.get('data_type') == 'discrete':
+                print(f" - analyze_chart: 執行離散型 OOB 分析 for {group_name}/{chart_name}")
+                
+                # 準備數據 
+                weekly_data = raw_df[(raw_df['point_time'] >= weekly_start_date) & (raw_df['point_time'] <= weekly_end_date)].copy()
+                baseline_end_date_for_discrete = weekly_start_date - pd.Timedelta(seconds=1)
+                baseline_start_date_for_discrete = baseline_end_date_for_discrete - pd.Timedelta(days=365)
+                baseline_data = raw_df[(raw_df['point_time'] >= baseline_start_date_for_discrete) & (raw_df['point_time'] <= baseline_end_date_for_discrete)].copy()
+                
+                if not baseline_data.empty and not weekly_data.empty:
+                    # 計算統計數據
+                    def calculate_statistics(data):
+                        if data.shape[0] <= 1:
+                            sigma = 0.0
+                        else:
+                            sigma = data['point_val'].std()
+                        if np.isnan(sigma):
+                            sigma = 0.0
+                        return {
+                            'values': data['point_val'].values,
+                            'cnt': data.shape[0],
+                            'mean': data['point_val'].mean(),
+                            'sigma': sigma
+                        }
+                    
+                    base_data_dict = calculate_statistics(baseline_data)
+                    weekly_data_dict = calculate_statistics(weekly_data)
+                    
+                    # 呼叫離散型 OOB 計算
+                    discrete_oob_result = discrete_oob_calculator(base_data_dict, weekly_data_dict, chart_info)
+                    
+                    # 更新結果，覆蓋連續型的 OOB 結果
+                    for key, value in discrete_oob_result.items():
+                        if key.startswith('HL_'):
+                            result[key] = value
+                    
+                    result['data_type'] = 'discrete'
+                    print(f" - analyze_chart: 離散型 OOB 處理完成 for {group_name}/{chart_name}")
+                else:
+                    print(f" - analyze_chart: 離散型 OOB 分析數據不足 for {group_name}/{chart_name}")
+                    result['data_type'] = 'discrete'
+            else:
+                # 連續型使用原本的 OOB 方法（已在 process_single_chart 中處理）
+                print(f" - analyze_chart: 使用連續型 OOB 分析 for {group_name}/{chart_name}")
+                result['data_type'] = 'continuous'
+            # === 不同數據類型 OOB 處理結束 ===
 
             print(f" - analyze_chart: process_single_chart 返回結果 (部分): {list(result.keys())}")
 
@@ -2101,9 +2443,8 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
     def save_results(self):
         results_df = pd.DataFrame(self.results)
 
-        # 確保所有預期的列都存在，即使某些圖表沒有這些數據
-        # 保留 Cpk 列用於 Excel 輸出
-        expected_cols = ['data_cnt', 'ooc_cnt', 'WE_Rule', 'OOB_Rule', 'Material_no',
+        # 確保所有預期的列都存在，包括新增的數據類型欄位
+        expected_cols = ['data_cnt', 'ooc_cnt', 'WE_Rule', 'OOB_Rule', 'data_type', 'Material_no',
                          'group_name', 'chart_name', 'chart_ID', 'Characteristics',
                          'USL', 'LSL', 'UCL', 'LCL', 'Target', 'Cpk', 'Resolution',
                          'chart_path', 'weekly_chart_path']
@@ -2212,7 +2553,7 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
                         </thead>
                         <tbody>
                             {''.join(self.create_table_row(key, result) for key in [
-                                'data_cnt', 'ooc_cnt', 'WE_Rule', 'OOB_Rule', 'Material_no',
+                                'data_cnt', 'ooc_cnt', 'WE_Rule', 'OOB_Rule', 'data_type', 'Material_no',
                                 'group_name', 'chart_name', 'Cpk'
                             ])}
                         </tbody>
