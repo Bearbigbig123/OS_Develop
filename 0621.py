@@ -1285,8 +1285,15 @@ def plot_spc_chart(raw_df, chart_info, weekly_start_date, weekly_end_date):
              f"UCL: [{chart_info['UCL']}] | Target: [{chart_info['Target']}] | LCL: [{chart_info['LCL']}]")
     plt.title(title, loc='left', fontsize=12)
 
-    if len(raw_df) > 300:
-        raw_df = raw_df.tail(len(raw_df))
+    # === 新增：1000點限制邏輯 ===
+    max_points = 1000
+    original_length = len(raw_df)
+    
+    if len(raw_df) > max_points:
+        print(f"  plot_spc_chart: 原始數據點數 {original_length} 超過限制 {max_points}，截取最近的 {max_points} 點")
+        raw_df = raw_df.tail(max_points).copy()
+    else:
+        print(f"  plot_spc_chart: 數據點數 {original_length} 未超過限制 {max_points}，使用全部數據")
 
     points_num = len(raw_df)
     x_values = np.arange(points_num)
@@ -1331,6 +1338,11 @@ def plot_spc_chart(raw_df, chart_info, weekly_start_date, weekly_end_date):
     ax = plt.gca()
     ax.spines['right'].set_visible(False)
     ax.spines['top'].set_visible(False)
+
+    # === 新增：在圖表上顯示數據截取信息 ===
+    if original_length > max_points:
+        plt.figtext(0.02, 0.0, f"顯示最近 {max_points} 點 (原始: {original_length} 點)", 
+                   fontsize=8, color='gray', ha='left')
 
     plt.tight_layout()
 
