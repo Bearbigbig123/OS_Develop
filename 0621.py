@@ -114,7 +114,14 @@ def format_datetime(dt):
 
 def format_and_clean_data(raw_df, chart_info):
     import pandas as pd
-    raw_df['point_time'] = raw_df['point_time'].apply(format_datetime)
+    # 性能優化：使用向量化操作代替 apply
+    raw_df['point_time'] = pd.to_datetime(
+        raw_df['point_time'], 
+        format='%Y/%m/%d %H:%M', 
+        errors='coerce',
+        infer_datetime_format=True  # 加速轉換
+    )
+    
     create_time = pd.to_datetime(chart_info['CHART_CREATE_TIME'], format="%m/%d/%Y %I:%M:%S %p", errors='coerce')
     raw_df.dropna(subset=['point_val', 'point_time'], inplace=True)
     raw_df = raw_df[raw_df['point_time'] >= create_time]
@@ -1594,6 +1601,10 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
         self.image_path = resource_path('image.png')
         self.results = []
 
+        # 性能優化：添加快取
+        self.csv_cache = {}  # CSV 文件快取
+        self.chart_types_cache = {}  # 數據類型快取
+        
         self.filter_type_combo = None
         self.filter_value_combo = None
         self.header_container = None
@@ -2211,6 +2222,22 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
 
         return label
 
+    def get_cached_csv(self, filepath):
+        """使用快取讀取 CSV 檔案，提升性能"""
+        try:
+            if filepath not in self.csv_cache:
+                print(f"  - 讀取並快取 CSV: {os.path.basename(filepath)}")
+                df = pd.read_csv(filepath)
+                self.csv_cache[filepath] = df
+            else:
+                print(f"  - 使用快取的 CSV: {os.path.basename(filepath)}")
+            
+            # 返回副本避免修改快取的資料
+            return self.csv_cache[filepath].copy()
+        except Exception as e:
+            print(f"[Error] 讀取檔案 {filepath} 失敗: {str(e)}")
+            return None
+
     def process_charts(self):
         import time
         self.results = []
@@ -2221,12 +2248,19 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
         try:
             self.validate_files_and_directories()
             self.progress_bar.setValue(0)
-
             self.clear_image_grid()
 
             all_charts_info = load_chart_information(self.filepath)
             total_charts_count = len(all_charts_info)
             self.progress_bar.setMaximum(100)
+
+            # 性能優化：預處理所有圖表的數據類型
+            print("=== 性能優化：開始預處理數據類型 ===")
+            self.preprocess_chart_types(all_charts_info)
+            
+            # 清空 CSV 快取（如果之前有的話）
+            self.csv_cache.clear()
+            print("=== 預處理完成，開始處理圖表 ===")
 
             if self.display_gui_checkbox.isChecked():
                 self.add_column_headers()
@@ -2236,54 +2270,67 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
             for i, (_, chart_info) in enumerate(all_charts_info.iterrows()):
                 group_name = str(chart_info['GroupName'])
                 chart_name = str(chart_info['ChartName'])
+                chart_key = f"{group_name}_{chart_name}"
                 print(f"\n正在處理圖表: GroupName={group_name}, ChartName={chart_name}")
 
                 try:
                     filepath = find_matching_file(self.raw_data_directory, group_name, chart_name)
-                    raw_df = None
+                    
                     if filepath and os.path.exists(filepath):
-                        raw_df = pd.read_csv(filepath)
-                        print(f" - 原始資料 shape: {raw_df.shape}")
+                        # 性能優化：使用快取讀取 CSV
+                        raw_df = self.get_cached_csv(filepath)
+                        
+                        if raw_df is not None:
+                            print(f" - 原始資料 shape: {raw_df.shape}")
 
-                        if 'point_time' in raw_df.columns:
-                            raw_df['point_time'] = pd.to_datetime(raw_df['point_time'], errors='coerce')
-                            raw_df.dropna(subset=['point_time'], inplace=True)
+                            # 性能優化：使用預處理的數據類型
+                            data_type = self.chart_types_cache.get(chart_key, 'continuous')
+                            chart_info = chart_info.copy()  # 避免修改原始數據
+                            chart_info['data_type'] = data_type
+                            print(f" - 使用快取的數據類型: {data_type}")
 
-                        is_successful, processed_df, updated_chart_info = preprocess_data(chart_info.copy(), raw_df.copy())
+                            if 'point_time' in raw_df.columns:
+                                raw_df['point_time'] = pd.to_datetime(raw_df['point_time'], errors='coerce', infer_datetime_format=True)
+                                raw_df.dropna(subset=['point_time'], inplace=True)
 
-                        if not is_successful or processed_df is None or processed_df.empty:
-                            print(f"[Info] 圖表 {group_name}/{chart_name} 預處理失敗或資料為空，跳過。")
-                            skipped_charts_count += 1
-                        else:
-                            print(f" - 預處理後資料 shape: {processed_df.shape}")
-                            print(f" - 準備分析圖表: {group_name}/{chart_name}")
+                            is_successful, processed_df, updated_chart_info = preprocess_data(chart_info, raw_df)
 
-                            # 假進度條：每個 chart 處理時讓進度條在這一格內慢慢遞增
-                            fake_steps = 10
-                            for fake_step in range(fake_steps):
-                                percent = int(((i + fake_step / fake_steps) / total_charts_count) * 100)
-                                self.progress_bar.setValue(percent)
-                                QtWidgets.QApplication.processEvents()
-                                time.sleep(0.01)
-
-                            result = self.analyze_chart(execution_time, processed_df, updated_chart_info)
-
-                            if result:
-                                self.results.append(result)
-                                processed_charts_count += 1
-
-                                if self.display_gui_checkbox.isChecked():
-                                    if 'chart_path' in result and 'weekly_chart_path' in result:
-                                        self.display_image(result, len(self.results) - 1)
-                                        print(f" - 顯示圖表完成: {group_name}/{chart_name}")
-                                    else:
-                                        print(f"[Warning] 圖表 {group_name}/{chart_name} 缺少圖片路徑，無法顯示。")
-                                else:
-                                    print(f" - GUI 顯示已禁用，跳過顯示圖表: {group_name}/{chart_name}")
-                            else:
-                                print(f"[Info] 圖表 {group_name}/{chart_name} 分析返回 None，跳過結果記錄。")
+                            if not is_successful or processed_df is None or processed_df.empty:
+                                print(f"[Info] 圖表 {group_name}/{chart_name} 預處理失敗或資料為空，跳過。")
                                 skipped_charts_count += 1
+                            else:
+                                print(f" - 預處理後資料 shape: {processed_df.shape}")
+                                print(f" - 準備分析圖表: {group_name}/{chart_name}")
 
+                                # 性能優化：減少假進度條的步數，降低 GUI 更新頻率
+                                fake_steps = 5  # 從 10 減少到 5
+                                for fake_step in range(fake_steps):
+                                    percent = int(((i + fake_step / fake_steps) / total_charts_count) * 100)
+                                    self.progress_bar.setValue(percent)
+                                    if fake_step % 2 == 0:  # 只在偶數步驟更新 GUI
+                                        QtWidgets.QApplication.processEvents()
+                                    time.sleep(0.005)  # 從 0.01 減少到 0.005
+
+                                result = self.analyze_chart(execution_time, processed_df, updated_chart_info)
+
+                                if result:
+                                    self.results.append(result)
+                                    processed_charts_count += 1
+
+                                    if self.display_gui_checkbox.isChecked():
+                                        if 'chart_path' in result and 'weekly_chart_path' in result:
+                                            self.display_image(result, len(self.results) - 1)
+                                            print(f" - 顯示圖表完成: {group_name}/{chart_name}")
+                                        else:
+                                            print(f"[Warning] 圖表 {group_name}/{chart_name} 缺少圖片路徑，無法顯示。")
+                                    else:
+                                        print(f" - GUI 顯示已禁用，跳過顯示圖表: {group_name}/{chart_name}")
+                                else:
+                                    print(f"[Info] 圖表 {group_name}/{chart_name} 分析返回 None，跳過結果記錄。")
+                                    skipped_charts_count += 1
+                        else:
+                            print(f"[Error] 無法讀取檔案: {filepath}")
+                            skipped_charts_count += 1
                     else:
                         print(f"[Info] 圖表 {group_name}/{chart_name} 對應檔案 {filepath} 不存在，跳過處理。")
                         skipped_charts_count += 1
@@ -2296,10 +2343,15 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
                     traceback.print_exc()
                     skipped_charts_count += 1
 
-                # 真正 chart 處理完後，設到正確進度
-                percent = int(((i + 1) / total_charts_count) * 100)
-                self.progress_bar.setValue(percent)
-                QtWidgets.QApplication.processEvents()
+                # 性能優化：減少 GUI 更新頻率
+                if i % 2 == 0:  # 每3個圖表更新一次進度條
+                    percent = int(((i + 1) / total_charts_count) * 100)
+                    self.progress_bar.setValue(percent)
+                    QtWidgets.QApplication.processEvents()
+
+            # 最終更新進度條
+            self.progress_bar.setValue(100)
+            QtWidgets.QApplication.processEvents()
 
             self.update_summary_dashboard(total_charts_count, processed_charts_count, skipped_charts_count)
 
@@ -2308,6 +2360,11 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
                 QtWidgets.QMessageBox.information(self, "Processing Complete", "Results have been saved to result_with_images.xlsx")
             else:
                 QtWidgets.QMessageBox.information(self, "Processing Complete", "No charts were processed successfully to save.")
+
+            # 清理快取（可選）
+            print(f"處理完成，清理快取。CSV 快取大小: {len(self.csv_cache)}")
+            # 如果記憶體有限，可以清空快取
+            # self.csv_cache.clear()
 
         except FileNotFoundError as e:
             self.show_error("File Error", str(e))
@@ -2380,6 +2437,59 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
             self.filter_value_combo.addItems(["T14P5", "T14P6", "T12P4"])
         elif filter_type == "Production Line":
             self.filter_value_combo.addItems(["7", "11", "5", "8", "6", "9", "4", "10"])
+
+    def preprocess_chart_types(self, all_charts_info):
+        """
+        性能優化：一次性預處理所有圖表的數據類型，避免重複計算
+        """
+        print("正在預處理圖表數據類型...")
+        chart_types = {}
+        processed_files = set()
+        
+        for _, chart_info in all_charts_info.iterrows():
+            group_name = str(chart_info.get('GroupName', 'Unknown'))
+            chart_name = str(chart_info.get('ChartName', 'Unknown'))
+            chart_key = f"{group_name}_{chart_name}"
+            
+            # 找到對應的 CSV 文件
+            filepath = find_matching_file(self.raw_data_directory, group_name, chart_name)
+            
+            if filepath and os.path.exists(filepath) and filepath not in processed_files:
+                try:
+                    # 快速讀取部分數據來判斷類型（只需要 point_val 欄位）
+                    raw_df = pd.read_csv(filepath, usecols=['point_val'] if 'point_val' in pd.read_csv(filepath, nrows=1).columns else None, nrows=1000)
+                    
+                    if 'point_val' in raw_df.columns:
+                        data_type = determine_data_type(raw_df['point_val'].dropna())
+                        chart_types[chart_key] = data_type
+                        processed_files.add(filepath)
+                        print(f"  預處理完成: {chart_key} -> {data_type}")
+                    else:
+                        chart_types[chart_key] = 'continuous'  # 預設值
+                        
+                except Exception as e:
+                    print(f"  預處理錯誤 {chart_key}: {e}")
+                    chart_types[chart_key] = 'continuous'  # 預設值
+            else:
+                chart_types[chart_key] = 'continuous'  # 預設值
+        
+        self.chart_types_cache = chart_types
+        print(f"數據類型預處理完成，共處理 {len(chart_types)} 個圖表")
+        return chart_types
+
+    def get_cached_csv(self, filepath):
+        """
+        性能優化：使用快取讀取 CSV 文件，避免重複讀取
+        """
+        if filepath not in self.csv_cache:
+            try:
+                self.csv_cache[filepath] = pd.read_csv(filepath)
+                print(f"  CSV 文件已快取: {os.path.basename(filepath)}")
+            except Exception as e:
+                print(f"  CSV 讀取錯誤 {filepath}: {e}")
+                return None
+        
+        return self.csv_cache[filepath].copy() if self.csv_cache[filepath] is not None else None
 
 
     def analyze_chart(self, execution_time, raw_df, chart_info):
