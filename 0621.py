@@ -248,6 +248,12 @@ def record_high_low_calculator(current_week_data, historical_data):
         current_week_data = np.asarray(current_week_data)
         historical_data = np.asarray(historical_data)
         
+        # DEBUG: 輸出數據詳細信息
+        print(f"  DEBUG: 當週數據點數={len(current_week_data)}, 基線數據點數={len(historical_data)}")
+        print(f"  DEBUG: 當週數據前5個值={current_week_data[:5] if len(current_week_data) >= 5 else current_week_data}")
+        print(f"  DEBUG: 基線數據前5個值={historical_data[:5] if len(historical_data) >= 5 else historical_data}")
+        print(f"  DEBUG: 基線數據後5個值={historical_data[-5:] if len(historical_data) >= 5 else historical_data}")
+        
         # 計算當週最高值和最低值 - 使用numpy的快速操作
         current_max = np.max(current_week_data)
         current_min = np.min(current_week_data)
@@ -255,6 +261,18 @@ def record_high_low_calculator(current_week_data, historical_data):
         # 計算歷史最高值和最低值 - 使用numpy的快速操作
         historical_max = np.max(historical_data)
         historical_min = np.min(historical_data)
+        
+        # DEBUG: 輸出詳細比較信息
+        print(f"  DEBUG: 當週最高值={current_max:.8f}, 歷史最高值={historical_max:.8f}")
+        print(f"  DEBUG: 當週最低值={current_min:.8f}, 歷史最低值={historical_min:.8f}")
+        print(f"  DEBUG: 最高值差異={current_max - historical_max:.8f}")
+        print(f"  DEBUG: 最低值差異={current_min - historical_min:.8f}")
+        
+        # 檢查當週數據是否包含歷史極值
+        current_has_hist_max = np.any(current_week_data == historical_max)
+        current_has_hist_min = np.any(current_week_data == historical_min)
+        print(f"  DEBUG: 當週數據是否包含歷史最高值={current_has_hist_max}")
+        print(f"  DEBUG: 當週數據是否包含歷史最低值={current_has_hist_min}")
         
         # 判斷是否創下新高或新低 - 簡單的數值比較，非常快速
         record_high = current_max > historical_max
@@ -842,7 +860,7 @@ def trending(raw_df, weekly_start_date, weekly_end_date, baseline_start_date, ba
     return 'NO_HIGHLIGHT'
 
 # 離散型 OOB 處理函數
-def discrete_oob_calculator(base_data, weekly_data, chart_info, confidence_level=0.95):
+def discrete_oob_calculator(base_data, weekly_data, chart_info):
     """
     離散型數據的 OOB 計算方法
     包含修改後的 k-shift 和新增的 category_LT_Shift
@@ -851,7 +869,7 @@ def discrete_oob_calculator(base_data, weekly_data, chart_info, confidence_level
     - base_data: 基線數據字典 (包含 'values', 'cnt', 'mean', 'sigma')
     - weekly_data: 週數據字典 (包含 'values', 'cnt', 'mean', 'sigma')
     - chart_info: 圖表信息
-    - confidence_level: 信心水準
+
     
     Returns:
     - dict: 包含 OOB 結果的字典
@@ -1206,6 +1224,10 @@ def process_single_chart(chart_info, raw_df, initial_baseline_start_date, baseli
         print(f"  trending 返回: {trending_results}")
 
         print("  正在呼叫 record_high_low_calculator...")
+        # DEBUG: 輸出時間範圍信息
+        print(f"  DEBUG: 基線時間範圍 - 從 {actual_baseline_start_date} 到 {baseline_end_date}")
+        print(f"  DEBUG: 當週時間範圍 - 從 {weekly_start_date} 到 {weekly_end_date}")
+        print(f"  DEBUG: 基線結束與當週開始間隔 = {weekly_start_date - baseline_end_date}")
         # 計算當週數據是否創下歷史新高或新低
         record_results = record_high_low_calculator(weekly_data['point_val'].values, baseline_data['point_val'].values)
         print(f"  record_high_low_calculator 返回: {record_results}")
@@ -2398,142 +2420,51 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
         print(f" - analyze_chart: 計算出的時間範圍 - Weekly: {weekly_start_date} to {weekly_end_date}, Initial Baseline: {initial_baseline_start_date} to {baseline_end_date}")
 
         try:
-            # === 數據類型判斷（使用全部可用資料） ===
+            # === 提前進行數據類型判斷 ===
             if raw_df is None or raw_df.empty or 'point_val' not in raw_df.columns:
                 print(" - analyze_chart: raw_df 無效或為空，預設為連續型")
-                chart_info['data_type'] = 'continuous'
+                data_type = 'continuous'
             else:
                 # 使用全部 point_val（移除 NaN）來判斷是否為離散
                 data_type = determine_data_type(raw_df['point_val'].dropna())
-                print(f" - analyze_chart: 使用全部資料判斷數據類型: {data_type}")
-                chart_info['data_type'] = data_type
-            # === 數據類型判斷結束 ===
+                print(f" - analyze_chart: 數據類型判斷結果: {data_type}")
+            
+            chart_info['data_type'] = data_type
 
-            print(f" - analyze_chart: 準備呼叫外部 process_single_chart for {group_name}/{chart_name} with raw_df shape {raw_df.shape}")
-            # 統一傳入初始的一年基線範圍，讓 process_single_chart 內部決定實際使用的範圍
-            result = process_single_chart(chart_info.copy(), raw_df, initial_baseline_start_date, baseline_end_date, weekly_start_date, weekly_end_date)
-            print(f" - analyze_chart: 外部 process_single_chart 呼叫完成 for {group_name}/{chart_name}")
+            # === 根據數據類型分流處理 ===
+            if data_type == 'discrete':
+                print(f" - analyze_chart: 執行離散型專用流程 for {group_name}/{chart_name}")
+                result = self._process_discrete_chart(raw_df, chart_info, weekly_start_date, weekly_end_date, 
+                                                    initial_baseline_start_date, baseline_end_date)
+            else:
+                print(f" - analyze_chart: 執行連續型流程 for {group_name}/{chart_name}")
+                result = process_single_chart(chart_info.copy(), raw_df, initial_baseline_start_date, 
+                                            baseline_end_date, weekly_start_date, weekly_end_date)
+                if result:
+                    result['data_type'] = 'continuous'
 
-            if result is None or not isinstance(result, dict):
-                print(f" - analyze_chart: 外部 process_single_chart 返回 None 或無效結果 for {group_name}/{chart_name}, 跳過後續處理.")
+            if result is None:
+                print(f" - analyze_chart: 處理返回 None for {group_name}/{chart_name}")
                 return None
 
-            # === 修改：統一使用相同的基線範圍選擇邏輯 ===
-            if chart_info.get('data_type') == 'discrete':
-                print(f" - analyze_chart: 執行離散型 OOB 分析 for {group_name}/{chart_name}")
-                
-                # === 使用與連續型相同的基線範圍選擇邏輯 ===
-                # 步驟 1: 使用初始的一年基線範圍過濾數據並計數
-                baseline_data_one_year = raw_df[(raw_df['point_time'] >= initial_baseline_start_date) & (raw_df['point_time'] <= baseline_end_date)].copy()
-                baseline_count_one_year = len(baseline_data_one_year)
-                print(f" - analyze_chart (離散型): 初始一年基線數據點數量: {baseline_count_one_year}")
-
-                # 步驟 2: 根據計數決定最終使用的基線開始日期
-                baseline_insufficient_discrete = False
-                if baseline_count_one_year < 10:
-                    # 如果少於 10 點，將基線期擴展到兩年
-                    actual_baseline_start_date = baseline_end_date - pd.Timedelta(days=365 * 2)
-                    print(f" - analyze_chart (離散型): 基線數據點數量 ({baseline_count_one_year}) < 10，將基線期擴展至兩年: {actual_baseline_start_date} 至 {baseline_end_date}")
-                    
-                    # 檢查擴展後的數量
-                    baseline_data_two_year = raw_df[(raw_df['point_time'] >= actual_baseline_start_date) & (raw_df['point_time'] <= baseline_end_date)].copy()
-                    baseline_count_two_year = len(baseline_data_two_year)
-                    print(f" - analyze_chart (離散型): 擴展至兩年後基線數據點數量: {baseline_count_two_year}")
-                    
-                    if baseline_count_two_year < 10:
-                        print(f" - analyze_chart (離散型): ⚠️  擴展至兩年後仍少於10點 ({baseline_count_two_year})，將跳過離散型 OOB 分析")
-                        baseline_insufficient_discrete = True
-                else:
-                    # 如果大於等於 10 點，使用一年的基線期
-                    actual_baseline_start_date = initial_baseline_start_date
-                    print(f" - analyze_chart (離散型): 基線數據點數量 ({baseline_count_one_year}) >= 10，使用一年基線期: {actual_baseline_start_date} 至 {baseline_end_date}")
-
-                # 步驟 3: 使用最終確定的基線範圍過濾數據
-                baseline_data = raw_df[(raw_df['point_time'] >= actual_baseline_start_date) & (raw_df['point_time'] <= baseline_end_date)].copy()
-                print(f" - analyze_chart (離散型): 篩選後 baseline_data shape (使用 {len(baseline_data)} 點從 {actual_baseline_start_date} 至 {baseline_end_date}): {baseline_data.shape}")
-                
-                weekly_data = raw_df[(raw_df['point_time'] >= weekly_start_date) & (raw_df['point_time'] <= weekly_end_date)].copy()
-                
-                if not baseline_data.empty and not weekly_data.empty and not baseline_insufficient_discrete:
-                    print(f" - analyze_chart (離散型): 基線數據充足，進行正常離散型 OOB 分析")
-                    # 計算統計數據
-                    def calculate_statistics(data):
-                        if data.shape[0] <= 1:
-                            sigma = 0.0
-                        else:
-                            sigma = data['point_val'].std()
-                        if np.isnan(sigma):
-                            sigma = 0.0
-                        return {
-                            'values': data['point_val'].values,
-                            'cnt': data.shape[0],
-                            'mean': data['point_val'].mean(),
-                            'sigma': sigma
-                        }
-                    
-                    base_data_dict = calculate_statistics(baseline_data)
-                    weekly_data_dict = calculate_statistics(weekly_data)
-                    
-                    print(f" - analyze_chart (離散型): 基線數據統計 - cnt={base_data_dict['cnt']}, mean={base_data_dict['mean']}, sigma={base_data_dict['sigma']}")
-                    print(f" - analyze_chart (離散型): 週數據統計 - cnt={weekly_data_dict['cnt']}, mean={weekly_data_dict['mean']}, sigma={weekly_data_dict['sigma']}")
-                    
-                    # 呼叫離散型 OOB 計算
-                    discrete_oob_result = discrete_oob_calculator(base_data_dict, weekly_data_dict, chart_info)
-                    
-                    # 更新結果，覆蓋連續型的 OOB 結果
-                    for key, value in discrete_oob_result.items():
-                        if key.startswith('HL_'):
-                            result[key] = value
-                    
-                    result['data_type'] = 'discrete'
-                    print(f" - analyze_chart: 離散型 OOB 處理完成 for {group_name}/{chart_name}")
-                else:
-                    print(f" - analyze_chart: 離散型 OOB 分析數據不足 for {group_name}/{chart_name}")
-                    # 基線數據不足或週數據為空時的處理
-                    if baseline_insufficient_discrete:
-                        print(f" - analyze_chart: 離散型基線數據不足，設置所有 OOB 項目為 NO_HIGHLIGHT")
-                        # 覆蓋連續型的 OOB 結果為 NO_HIGHLIGHT
-                        result['HL_P95_shift'] = 'NO_HIGHLIGHT'
-                        result['HL_P50_shift'] = 'NO_HIGHLIGHT'
-                        result['HL_P05_shift'] = 'NO_HIGHLIGHT'
-                        result['HL_sticking_shift'] = 'NO_HIGHLIGHT'
-                        result['HL_trending'] = 'NO_HIGHLIGHT'
-                        result['HL_high_OOC'] = 'NO_HIGHLIGHT'
-                    result['data_type'] = 'discrete'
-                    result['baseline_insufficient'] = baseline_insufficient_discrete  # 標記離散型基線不足
-            else:
-                # 連續型使用原本的 OOB 方法（已在 process_single_chart 中處理）
-                print(f" - analyze_chart: 使用連續型 OOB 分析 for {group_name}/{chart_name}")
-                result['data_type'] = 'continuous'
-            # === 統一基線範圍處理結束 ===
-
-            print(f" - analyze_chart: process_single_chart 返回結果 (部分): {list(result.keys())}")
-
-            print(f" - analyze_chart: 準備呼叫 plot_spc_chart for {group_name}/{chart_name}")
+            # === 共同的後處理步驟 ===
+            print(f" - analyze_chart: 準備生成圖表 for {group_name}/{chart_name}")
+            
+            # 生成 SPC 圖表
             image_path, violated_rules = plot_spc_chart(raw_df, chart_info, weekly_start_date, weekly_end_date)
-            print(f" - analyze_chart: plot_spc_chart 呼叫完成 for {group_name}/{chart_name}")
-            print(f" - analyze_chart: plot_spc_chart 返回 image_path: {image_path}")
-            print(f" - analyze_chart: plot_spc_chart 返回 Violated Rules: {violated_rules}")
+            print(f" - analyze_chart: plot_spc_chart 完成，image_path: {image_path}")
 
-            weekly_data = raw_df[(raw_df['point_time'] >= weekly_start_date) & (raw_df['point_time'] <= weekly_end_date)].copy()
-            print(f" - analyze_chart: 切出當周資料 weekly_data shape: {weekly_data.shape}")
-
-            # Cpk 計算保留，雖然不在 Dashboard 顯示，但在 Excel 輸出中可能有需要
-            print(f" - analyze_chart: 準備呼叫 calculate_cpk for {group_name}/{chart_name}")
-            cpk_result = calculate_cpk(weekly_data, chart_info)
-            print(f" - analyze_chart: calculate_cpk 呼叫完成 for {group_name}/{chart_name}")
-            print(f" - analyze_chart: calculate_cpk 返回結果: {cpk_result}")
-
-            if cpk_result and 'Cpk' in cpk_result:
-                result['Cpk'] = cpk_result['Cpk']
-            else:
-                result['Cpk'] = np.nan
-
-            print(f" - analyze_chart: 準備呼叫 plot_weekly_spc_chart for {group_name}/{chart_name}")
+            # 生成週圖表
             weekly_image_path = plot_weekly_spc_chart(raw_df, chart_info, weekly_start_date, weekly_end_date)
-            print(f" - analyze_chart: plot_weekly_spc_chart 呼叫完成 for {group_name}/{chart_name}")
-            print(f" - analyze_chart: plot_weekly_spc_chart 返回 weekly_image_path: {weekly_image_path}")
+            print(f" - analyze_chart: plot_weekly_spc_chart 完成，weekly_image_path: {weekly_image_path}")
 
+            # Cpk 計算
+            weekly_data = raw_df[(raw_df['point_time'] >= weekly_start_date) & 
+                               (raw_df['point_time'] <= weekly_end_date)].copy()
+            cpk_result = calculate_cpk(weekly_data, chart_info)
+            result['Cpk'] = cpk_result.get('Cpk', np.nan) if cpk_result else np.nan
+
+            # 更新結果
             result['violated_rules'] = violated_rules if violated_rules is not None else {}
             self.build_result(result, image_path, weekly_image_path)
 
@@ -2544,6 +2475,157 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
                 print(f"[Error] analyze_chart 處理圖表 {group_name}/{chart_name} 時發生錯誤: {str(e)}")
                 traceback.print_exc()
                 return None
+
+    def _process_discrete_chart(self, raw_df, chart_info, weekly_start_date, weekly_end_date, 
+                              initial_baseline_start_date, baseline_end_date):
+        """
+        離散型數據的專用處理流程，包含 record high low 判斷
+        """
+        group_name = chart_info.get('group_name', 'Unknown')
+        chart_name = chart_info.get('chart_name', 'Unknown')
+        
+        print(f" - _process_discrete_chart: 開始離散型專用處理 {group_name}/{chart_name}")
+        
+        try:
+            # === 基線範圍選擇邏輯 ===
+            baseline_data_one_year = raw_df[(raw_df['point_time'] >= initial_baseline_start_date) & 
+                                          (raw_df['point_time'] <= baseline_end_date)].copy()
+            baseline_count_one_year = len(baseline_data_one_year)
+            print(f" - _process_discrete_chart: 初始一年基線數據點數量: {baseline_count_one_year}")
+
+            baseline_insufficient = False
+            if baseline_count_one_year < 10:
+                actual_baseline_start_date = baseline_end_date - pd.Timedelta(days=365 * 2)
+                print(f" - _process_discrete_chart: 基線數據不足，擴展至兩年: {actual_baseline_start_date}")
+                
+                baseline_data_two_year = raw_df[(raw_df['point_time'] >= actual_baseline_start_date) & 
+                                              (raw_df['point_time'] <= baseline_end_date)].copy()
+                baseline_count_two_year = len(baseline_data_two_year)
+                
+                if baseline_count_two_year < 10:
+                    print(f" - _process_discrete_chart: 擴展至兩年後仍少於10點，標記為基線不足")
+                    baseline_insufficient = True
+            else:
+                actual_baseline_start_date = initial_baseline_start_date
+
+            # 篩選最終數據
+            baseline_data = raw_df[(raw_df['point_time'] >= actual_baseline_start_date) & 
+                                 (raw_df['point_time'] <= baseline_end_date)].copy()
+            weekly_data = raw_df[(raw_df['point_time'] >= weekly_start_date) & 
+                               (raw_df['point_time'] <= weekly_end_date)].copy()
+
+            if baseline_data.empty:
+                print(f" - _process_discrete_chart: 基線數據為空，跳過處理")
+                return None
+                
+            if weekly_data.empty:
+                print(f" - _process_discrete_chart: 週數據為空，跳過處理")
+                return None
+
+            # === 計算統計數據 ===
+            def calculate_statistics(data):
+                if data.shape[0] <= 1:
+                    sigma = 0.0
+                else:
+                    sigma = data['point_val'].std()
+                if np.isnan(sigma):
+                    sigma = 0.0
+                return {
+                    'values': data['point_val'].values,
+                    'cnt': data.shape[0],
+                    'mean': data['point_val'].mean(),
+                    'sigma': sigma
+                }
+
+            base_data_dict = calculate_statistics(baseline_data)
+            weekly_data_dict = calculate_statistics(weekly_data)
+
+            print(f" - _process_discrete_chart: 基線統計 - cnt={base_data_dict['cnt']}, mean={base_data_dict['mean']}")
+            print(f" - _process_discrete_chart: 週統計 - cnt={weekly_data_dict['cnt']}, mean={weekly_data_dict['mean']}")
+
+            # === 初始化結果字典 ===
+            result = {
+                'data_cnt': weekly_data_dict['cnt'],
+                'ooc_cnt': 0,
+                'WE_Rule': '',
+                'OOB_Rule': '',
+                'Material_no': chart_info.get('material_no', 'N/A'),
+                'group_name': chart_info.get('group_name', 'N/A'),
+                'chart_name': chart_info.get('chart_name', 'N/A'),
+                'chart_ID': chart_info.get('ChartID', 'N/A'),
+                'Characteristics': chart_info.get('Characteristics', 'N/A'),
+                'USL': chart_info.get('USL', 'N/A'),
+                'LSL': chart_info.get('LSL', 'N/A'),
+                'UCL': chart_info.get('UCL', 'N/A'),
+                'LCL': chart_info.get('LCL', 'N/A'),
+                'Target': chart_info.get('Target', 'N/A'),
+                'Resolution': chart_info.get('Resolution', 'N/A'),
+                'baseline_insufficient': baseline_insufficient,
+                'data_type': 'discrete'
+            }
+
+            if not baseline_insufficient:
+                # === OOC 計算 ===
+                print(" - _process_discrete_chart: 計算 OOC...")
+                weekly_df = pd.DataFrame({'point_val': weekly_data['point_val']})
+                ooc_results = ooc_calculator(weekly_df, chart_info.get('UCL'), chart_info.get('LCL'))
+                ooc_highlight = review_ooc_results(ooc_results[1], ooc_results[2])
+                result['ooc_cnt'] = ooc_results[1]
+                
+                # === 離散型 OOB 計算 ===
+                print(" - _process_discrete_chart: 計算離散型 OOB...")
+                discrete_oob_result = discrete_oob_calculator(base_data_dict, weekly_data_dict, chart_info)
+                
+                # === Record High Low 計算 ===
+                print(" - _process_discrete_chart: 計算 record high low...")
+                # DEBUG: 輸出時間範圍信息
+                print(f" - DEBUG: 基線時間範圍 - 從 {actual_baseline_start_date} 到 {baseline_end_date}")
+                print(f" - DEBUG: 當週時間範圍 - 從 {weekly_start_date} 到 {weekly_end_date}")
+                print(f" - DEBUG: 基線結束與當週開始間隔 = {weekly_start_date - baseline_end_date}")
+                record_results = record_high_low_calculator(
+                    weekly_data['point_val'].values, 
+                    baseline_data['point_val'].values
+                )
+                
+                # === 更新結果 ===
+                result.update({
+                    'HL_P95_shift': discrete_oob_result.get('HL_P95_shift', 'NO_HIGHLIGHT'),
+                    'HL_P50_shift': discrete_oob_result.get('HL_P50_shift', 'NO_HIGHLIGHT'),
+                    'HL_P05_shift': discrete_oob_result.get('HL_P05_shift', 'NO_HIGHLIGHT'),
+                    'HL_sticking_shift': discrete_oob_result.get('HL_sticking_shift', 'NO_HIGHLIGHT'),
+                    'HL_trending': discrete_oob_result.get('HL_trending', 'NO_HIGHLIGHT'),
+                    'HL_high_OOC': ooc_highlight,
+                    'HL_category_LT_shift': discrete_oob_result.get('HL_category_LT_shift', 'NO_HIGHLIGHT'),
+                    'HL_record_high_low': record_results.get('highlight_status', 'NO_HIGHLIGHT'),
+                    'record_high': record_results.get('record_high', False),
+                    'record_low': record_results.get('record_low', False)
+                })
+                
+                print(f" - _process_discrete_chart: 離散型 OOB 計算完成")
+                
+            else:
+                # 基線不足時設置所有 OOB 為 NO_HIGHLIGHT
+                result.update({
+                    'HL_P95_shift': 'NO_HIGHLIGHT',
+                    'HL_P50_shift': 'NO_HIGHLIGHT',
+                    'HL_P05_shift': 'NO_HIGHLIGHT',
+                    'HL_sticking_shift': 'NO_HIGHLIGHT',
+                    'HL_trending': 'NO_HIGHLIGHT',
+                    'HL_high_OOC': 'NO_HIGHLIGHT',
+                    'HL_category_LT_shift': 'NO_HIGHLIGHT',
+                    'HL_record_high_low': 'NO_HIGHLIGHT',
+                    'record_high': False,
+                    'record_low': False
+                })
+                print(f" - _process_discrete_chart: 基線數據不足，所有 OOB 設為 NO_HIGHLIGHT")
+
+            print(f" - _process_discrete_chart: 離散型處理完成 {group_name}/{chart_name}")
+            return result
+
+        except Exception as e:
+            print(f" - _process_discrete_chart: 處理錯誤 {group_name}/{chart_name}: {e}")
+            traceback.print_exc()
+            return None
 
     def build_result(self, result, image_path, weekly_image_path):
         violated_rules = result.get('violated_rules', {})
