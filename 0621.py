@@ -223,6 +223,63 @@ def rolling_calculation(data_values, days_to_roll):
     
     # 滾動數據，取最後 'days_to_roll' 個元素
     return data_values[-days_to_roll:] if len(data_values) >= days_to_roll else data_values
+
+def record_high_low_calculator(current_week_data, historical_data):
+    """
+    判斷當週數據是否創下歷史新高或新低
+    
+    Args:
+        current_week_data: 當週數據的 point_val 值 (array-like)
+        historical_data: 歷史數據的 point_val 值 (array-like)  
+    
+    Returns:
+        dict: 包含 record_high, record_low, highlight_status 的字典
+    """
+    try:
+        # 快速檢查：如果任一數據集為空，直接返回
+        if len(current_week_data) == 0 or len(historical_data) == 0:
+            return {
+                'record_high': False,
+                'record_low': False, 
+                'highlight_status': 'NO_HIGHLIGHT'
+            }
+        
+        # 性能優化：使用numpy操作，避免Python循環
+        current_week_data = np.asarray(current_week_data)
+        historical_data = np.asarray(historical_data)
+        
+        # 計算當週最高值和最低值 - 使用numpy的快速操作
+        current_max = np.max(current_week_data)
+        current_min = np.min(current_week_data)
+        
+        # 計算歷史最高值和最低值 - 使用numpy的快速操作
+        historical_max = np.max(historical_data)
+        historical_min = np.min(historical_data)
+        
+        # 判斷是否創下新高或新低 - 簡單的數值比較，非常快速
+        record_high = current_max > historical_max
+        record_low = current_min < historical_min
+        
+        # 如果創下新高或新低，則需要高亮顯示
+        highlight_status = 'HIGHLIGHT' if (record_high or record_low) else 'NO_HIGHLIGHT'
+        
+        print(f"  record_high_low_calculator: 當週最高={current_max:.4f}, 歷史最高={historical_max:.4f}, 創新高={record_high}")
+        print(f"  record_high_low_calculator: 當週最低={current_min:.4f}, 歷史最低={historical_min:.4f}, 創新低={record_low}")
+        print(f"  record_high_low_calculator: 高亮狀態={highlight_status}")
+        
+        return {
+            'record_high': record_high,
+            'record_low': record_low,
+            'highlight_status': highlight_status
+        }
+        
+    except Exception as e:
+        print(f"  record_high_low_calculator: 計算過程中發生錯誤: {e}")
+        return {
+            'record_high': False,
+            'record_low': False,
+            'highlight_status': 'NO_HIGHLIGHT'
+        }
 def review_kshift_results(results, resolution, characteristic, data_percentiles, base_percentiles):
     # 設定 highlight 的初始值
     highlight_conditions = {key: 'NO_HIGHLIGHT' for key in ['P95_shift', 'P50_shift', 'P05_shift']}
@@ -1148,6 +1205,11 @@ def process_single_chart(chart_info, raw_df, initial_baseline_start_date, baseli
         trending_results = trending(raw_df, weekly_start_date, weekly_end_date, actual_baseline_start_date, baseline_end_date)
         print(f"  trending 返回: {trending_results}")
 
+        print("  正在呼叫 record_high_low_calculator...")
+        # 計算當週數據是否創下歷史新高或新低
+        record_results = record_high_low_calculator(weekly_data['point_val'].values, baseline_data['point_val'].values)
+        print(f"  record_high_low_calculator 返回: {record_results}")
+
         # 判斷是否需要 highlight (任何一個子指標需要高亮，則總體高亮)
         highlight_status = 'HIGHLIGHT' if (
              kshift_results.get('P95_shift') == 'HIGHLIGHT' or
@@ -1155,7 +1217,8 @@ def process_single_chart(chart_info, raw_df, initial_baseline_start_date, baseli
              kshift_results.get('P05_shift') == 'HIGHLIGHT' or
              sticking_rate_results.get('highlight_status') == 'HIGHLIGHT' or
              trending_results == 'HIGHLIGHT' or
-             ooc_highlight == 'HIGHLIGHT' # 應該也要考慮 ooc_highlight
+             ooc_highlight == 'HIGHLIGHT' or # 應該也要考慮 ooc_highlight
+             record_results.get('highlight_status') == 'HIGHLIGHT' # 新增 record high/low 判斷
         ) else 'NO_HIGHLIGHT'
         print(f"  計算出的 highlight_status: {highlight_status}")
 
@@ -1173,6 +1236,9 @@ def process_single_chart(chart_info, raw_df, initial_baseline_start_date, baseli
             'HL_sticking_shift': sticking_rate_results.get('highlight_status', 'N/A'),
             'HL_trending': trending_results, # trending_results 本身就是 HIGHLIGHT/NO_HIGHLIGHT
             'HL_high_OOC': ooc_highlight, # ooc_highlight 本身就是 HIGHLIGHT/NO_HIGHLIGHT
+            'HL_record_high_low': record_results.get('highlight_status', 'N/A'), # 新增 record high/low 欄位
+            'record_high': record_results.get('record_high', False), # 是否創新高
+            'record_low': record_results.get('record_low', False), # 是否創新低
             'Material_no': chart_info.get('material_no', 'N/A'),
             'group_name': chart_info.get('group_name', 'N/A'),
             'chart_name': chart_info.get('chart_name', 'N/A'),
@@ -1494,7 +1560,7 @@ def resource_path(relative_path):
 
 # 常數定義
 HEADERS = ["Total Chart", "Weekly Chart", "Chart Info."]
-OOB_KEYS = ['HL_P95_shift', 'HL_P50_shift', 'HL_P05_shift', 'HL_sticking_shift', 'HL_trending', 'HL_high_OOC', 'HL_category_LT_shift']
+OOB_KEYS = ['HL_P95_shift', 'HL_P50_shift', 'HL_P05_shift', 'HL_sticking_shift', 'HL_trending', 'HL_high_OOC', 'HL_record_high_low', 'HL_category_LT_shift']
 
 
 class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
@@ -2332,16 +2398,15 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
         print(f" - analyze_chart: 計算出的時間範圍 - Weekly: {weekly_start_date} to {weekly_end_date}, Initial Baseline: {initial_baseline_start_date} to {baseline_end_date}")
 
         try:
-            # === 新增：數據類型判斷 ===
-            weekly_data_for_type_check = raw_df[(raw_df['point_time'] >= weekly_start_date) & (raw_df['point_time'] <= weekly_end_date)].copy()
-            
-            if not weekly_data_for_type_check.empty:
-                data_type = determine_data_type(weekly_data_for_type_check['point_val'])
-                print(f" - analyze_chart: 數據類型判斷結果: {data_type}")
-                chart_info['data_type'] = data_type
-            else:
-                print(f" - analyze_chart: 週數據為空，預設為連續型")
+            # === 數據類型判斷（使用全部可用資料） ===
+            if raw_df is None or raw_df.empty or 'point_val' not in raw_df.columns:
+                print(" - analyze_chart: raw_df 無效或為空，預設為連續型")
                 chart_info['data_type'] = 'continuous'
+            else:
+                # 使用全部 point_val（移除 NaN）來判斷是否為離散
+                data_type = determine_data_type(raw_df['point_val'].dropna())
+                print(f" - analyze_chart: 使用全部資料判斷數據類型: {data_type}")
+                chart_info['data_type'] = data_type
             # === 數據類型判斷結束 ===
 
             print(f" - analyze_chart: 準備呼叫外部 process_single_chart for {group_name}/{chart_name} with raw_df shape {raw_df.shape}")
@@ -2516,6 +2581,7 @@ class SPCApp(QtWidgets.QMainWindow): # 將 QTabWidget 改為 QMainWindow
         expected_cols = ['data_cnt', 'ooc_cnt', 'WE_Rule', 'OOB_Rule', 'data_type', 'Material_no',
                          'group_name', 'chart_name', 'chart_ID', 'Characteristics',
                          'USL', 'LSL', 'UCL', 'LCL', 'Target', 'Cpk', 'Resolution',
+                         'HL_record_high_low', 'record_high', 'record_low',
                          'chart_path', 'weekly_chart_path']
         for col in expected_cols:
             if col not in results_df.columns:
