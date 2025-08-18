@@ -1106,7 +1106,7 @@ class ToolMatchingWidget(QtWidgets.QWidget):
         dialog.exec()
 
     def _create_boxplots(self, grouped):
-        """僅創建圖表 figure 物件並保存在 self.chart_figures 中，不在 UI 上顯示。"""
+        """創建 SPC 圖和盒鬚圖，將 figure 物件保存在 self.chart_figures 中，不在 UI 上顯示。"""
         try:
             # 這些導入是必要的，因為 Matplotlib 在子線程或不同上下文中可能需要重新導入
             import matplotlib.pyplot as plt
@@ -1138,19 +1138,61 @@ class ToolMatchingWidget(QtWidgets.QWidget):
             # 為不同的組設置顏色
             colors = cm.tab10(np.linspace(0, 1, len(unique_groups)))
 
-            # 1. 創建散點圖
+            # 1. 創建 SPC 風格的圖表
             scatter_fig, scatter_ax = plt.subplots(figsize=(7, 4.5)) # 調整尺寸為較小的長方形
+            
+            # 計算整體統計量用於控制線
+            all_values = subdf["point_val"].values
+            # overall_mean = np.mean(all_values)
+            # overall_std = np.std(all_values)
+            
+
+            # 為每個群組繪製數據點，按時間順序連線
+            x_position = 0
             for i, mg in enumerate(unique_groups):
-                group_data = subdf[subdf["matching_group"] == mg]
+                group_data = subdf[subdf["matching_group"] == mg].sort_values("point_time")
                 if not group_data.empty:
-                    x = np.random.normal(i + 1, 0.1, size=len(group_data)) # 使用 i+1 作為中心
-                    scatter_ax.scatter(x, group_data["point_val"], color=colors[i], alpha=0.6, label=mg)
-            scatter_ax.set_title(f"Raw Data Points: {gname} - {cname}", fontsize=10)
-            scatter_ax.set_xticks(np.arange(len(unique_groups)) + 1)
-            scatter_ax.set_xticklabels(labels, rotation=0, ha='center')  # 不歪斜，置中
-            scatter_ax.set_xlabel("Matching Group")
+                    # 為每個群組創建連續的x位置
+                    x_vals = np.arange(x_position, x_position + len(group_data))
+                    y_vals = group_data["point_val"].values
+                    
+                    # 繪製數據點
+                    scatter_ax.scatter(x_vals, y_vals, color=colors[i], alpha=0.8, s=40, label=f'{mg}', zorder=3)
+                    
+                    # 連接同組內的點
+                    scatter_ax.plot(x_vals, y_vals, color=colors[i], alpha=0.5, linewidth=1, zorder=2)
+                    
+                    # 在群組間添加分隔線
+                    if i < len(unique_groups) - 1:  # 不在最後一組後面加線
+                        separator_x = x_position + len(group_data) - 0.5
+                        scatter_ax.axvline(x=separator_x, color='gray', linestyle='-', alpha=0.3, zorder=1)
+                    
+                    x_position += len(group_data)
+            
+            # 設置圖表樣式
+            scatter_ax.set_title(f"SPC Chart: {gname} - {cname}", fontsize=10)
+            scatter_ax.set_xlabel("Sample Sequence (Grouped by Matching Group)")
             scatter_ax.set_ylabel("Point Value")
-            scatter_ax.grid(True, linestyle='--', alpha=0.6)
+            scatter_ax.grid(True, linestyle='--', alpha=0.3, zorder=0)
+            
+            # 添加群組標籤在x軸上
+            if unique_groups:
+                group_positions = []
+                x_pos = 0
+                for mg in unique_groups:
+                    group_size = len(subdf[subdf["matching_group"] == mg])
+                    group_positions.append(x_pos + group_size/2 - 0.5)
+                    x_pos += group_size
+                
+                # 設置x軸刻度和標籤
+                scatter_ax.set_xticks(group_positions)
+                scatter_ax.set_xticklabels(labels, rotation=0, ha='center')
+                
+                # 添加次要刻度顯示樣本序號
+                scatter_ax.tick_params(axis='x', which='minor', bottom=True, top=False)
+            
+            # 調整圖例位置
+            scatter_ax.legend(loc='upper left', bbox_to_anchor=(1.02, 1), fontsize='small')
             scatter_fig.tight_layout()
 
             # 2. 創建盒鬚圖
@@ -1176,7 +1218,7 @@ class ToolMatchingWidget(QtWidgets.QWidget):
 
             # 保存圖表與分組鍵的映射
             key = (gname, cname)
-            self.chart_figures[key] = {'scatter': scatter_fig, 'box': box_fig}
+            self.chart_figures[key] = {'scatter': scatter_fig, 'box': box_fig}  # scatter實際上是SPC圖
 
             # 關鍵：關閉 figure 以釋放記憶體，因為我們已經將其保存在 self.chart_figures 中
             # FigureCanvas 會在需要時重新繪製它
@@ -1233,8 +1275,8 @@ class ToolMatchingWidget(QtWidgets.QWidget):
             temp_dir = tempfile.mkdtemp()
             print(f"[INFO] 創建臨時目錄: {temp_dir}")
 
-            # 先在 DataFrame 前添加兩個空白欄位，分別用於散點圖和盒鬚圖
-            df.insert(0, "ScatterPlot", "")  # 第一欄：散點圖
+            # 先在 DataFrame 前添加兩個空白欄位，分別用於SPC圖和盒鬚圖
+            df.insert(0, "SPC_Chart", "")    # 第一欄：SPC圖
             df.insert(1, "BoxPlot", "")      # 第二欄：盒鬚圖
 
             # 創建 Excel 文件
@@ -1257,7 +1299,7 @@ class ToolMatchingWidget(QtWidgets.QWidget):
                 cell.alignment = header_alignment
 
             # 增加圖表欄寬度以容納圖片
-            worksheet.column_dimensions['A'].width = 70  # 第一欄：散點圖
+            worksheet.column_dimensions['A'].width = 70  # 第一欄：SPC圖
             worksheet.column_dimensions['B'].width = 70  # 第二欄：盒鬚圖
 
             # 設定異常行的格式
@@ -1296,16 +1338,16 @@ class ToolMatchingWidget(QtWidgets.QWidget):
                     # 檢查是否資料不足
                     is_data_insufficient = (mean_index == '資料不足' or sigma_index == '資料不足' or k_value == '不比較')
 
-                    # 嘗試使用完整的盒鬚圖和散點圖
+                    # 嘗試使用完整的SPC圖和盒鬚圖
                     chart_key = (group_name, chart_name)
                     if has_chart_figures and chart_key in self.chart_figures:
-                        # 存在完整的分析圖表，使用實際的盒鬚圖和散點圖
+                        # 存在完整的分析圖表，使用實際的SPC圖和盒鬚圖
                         chart_data = self.chart_figures[chart_key]
 
-                        # 1. 處理散點圖 (放在第一欄)
+                        # 1. 處理SPC圖 (放在第一欄)
                         try:
                             scatter_fig = chart_data['scatter']
-                            temp_scatter_path = os.path.join(temp_dir, f"scatter_{group_name}_{chart_name}_{row_idx}.png")
+                            temp_scatter_path = os.path.join(temp_dir, f"spc_{group_name}_{chart_name}_{row_idx}.png")
                             scatter_fig.savefig(temp_scatter_path, format='png', bbox_inches='tight', transparent=True, dpi=100)
                             try:
                                 scatter_img = XLImage(temp_scatter_path)
@@ -1313,15 +1355,15 @@ class ToolMatchingWidget(QtWidgets.QWidget):
                                 scatter_img.height = img_display_height
                                 scatter_position = f"A{row_idx}"
                                 worksheet.add_image(scatter_img, scatter_position)
-                                print(f"[INFO] 已添加散點圖到單元格: {scatter_position}")
+                                print(f"[INFO] 已添加SPC圖到單元格: {scatter_position}")
                             except Exception as img_e:
-                                print(f"[ERROR] 添加散點圖到 Excel 失敗: {img_e}")
-                                worksheet.cell(row=row_idx, column=1).value = "散點圖載入失敗"
+                                print(f"[ERROR] 添加SPC圖到 Excel 失敗: {img_e}")
+                                worksheet.cell(row=row_idx, column=1).value = "SPC圖載入失敗"
                         except Exception as scatter_e:
-                            print(f"[ERROR] 處理散點圖時發生錯誤: {scatter_e}")
+                            print(f"[ERROR] 處理SPC圖時發生錯誤: {scatter_e}")
                             import traceback
                             traceback.print_exc()
-                            worksheet.cell(row=row_idx, column=1).value = "散點圖生成失敗"
+                            worksheet.cell(row=row_idx, column=1).value = "SPC圖生成失敗"
 
                         # 2. 處理盒鬚圖 (放在第二欄)
                         try:
